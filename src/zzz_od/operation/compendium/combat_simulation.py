@@ -147,6 +147,7 @@ class CombatSimulation(ZOperation):
                                             success_wait=1, retry_wait=1)
 
     @node_from(from_name='进入选择数量')
+    @node_from(from_name='识别电量')
     @operation_node(name='选择数量')
     def choose_card_num(self) -> OperationRoundResult:
         screen = self.screenshot()
@@ -195,6 +196,18 @@ class CombatSimulation(ZOperation):
         log.info('所需电量 %d 剩余电量 %d', self.charge_need, self.charge_left)
         if self.charge_need > self.charge_left:
             return self.round_success(CombatSimulation.STATUS_CHARGE_NOT_ENOUGH)
+        
+        self.card_num = self.plan.plan_times - self.plan.run_times
+        self.can_run_cards = self.charge_left // 20
+        possible_cards = []
+        for divisor in [5, 4, 3]:
+            if self.can_run_cards >= divisor and self.can_run_cards % divisor == 0:
+                possible_cards.append(divisor)
+        if possible_cards:
+            self.run_card_num = possible_cards[0]
+        else:
+            self.plan.card_num = 5
+            self.leased_card_num = self.can_run_cards % 5
 
         self.can_run_times = self.charge_left // self.charge_need
         max_need_run_times = self.plan.plan_times - self.plan.run_times

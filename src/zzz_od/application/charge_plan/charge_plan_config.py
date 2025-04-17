@@ -231,6 +231,28 @@ class ChargePlanConfig(YamlConfig):
             plan.run_times += 1
             self.save()
             return
+        
+    def add_plan_run_cards(self, to_add: ChargePlanItem, num: int) -> None:
+        """
+        找到一个合适的计划 增加有一次运行次数
+        """
+        # 第一次 先找还没有完成的
+        for plan in self.plan_list:
+            if not self._is_same_plan(plan, to_add):
+                continue
+            if plan.run_times >= plan.plan_times:
+                continue
+            plan.run_times += num
+            self.save()
+            return
+
+        # 第二次 就随便加一个
+        for plan in self.plan_list:
+            if not self._is_same_plan(plan, to_add):
+                continue
+            plan.run_times += num
+            self.save()
+            return
 
     def _is_same_plan(self, x: ChargePlanItem, y: ChargePlanItem) -> bool:
         if x is None or y is None:
