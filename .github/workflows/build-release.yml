@@ -84,12 +84,14 @@ jobs:
     
     - name: Get version
       id: get_version
+      shell: pwsh
       run: |
-        if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-          echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-        else
-          echo "version=${GITHUB_SHA}" >> $GITHUB_OUTPUT
-        fi
+        if ($env:GITHUB_REF -like 'refs/tags/*') {
+          $version = $env:GITHUB_REF.Substring(10)
+        } else {
+          $version = $env:GITHUB_SHA
+        }
+        echo "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
     
     - name: Download build artifacts
       uses: actions/download-artifact@v4
@@ -103,8 +105,8 @@ jobs:
         # Create .env directory and download files
         New-Item -ItemType Directory -Path "deploy/dist/.env" -Force
         Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile "deploy/dist/.env/get-pip.py"
-        # PortableGit.zip
-        Invoke-WebRequest -Uri "https://github.com/DoctorReid/OneDragon-Env/releases/download/portable/PortableGit.zip" -OutFile "deploy/dist/.env/PortableGit.zip"
+        # MinGit
+        Invoke-WebRequest -Uri "https://github.com/git-for-windows/git/releases/download/v2.49.0.windows.1/MinGit-2.49.0-busybox-64-bit.zip" -OutFile "deploy/dist/.env/PortableGit.zip"
         # Python
         Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip" -OutFile "deploy/dist/.env/python-3.11.9-embed-amd64.zip"
 
