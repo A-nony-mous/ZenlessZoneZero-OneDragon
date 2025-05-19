@@ -54,14 +54,21 @@ jobs:
         .\zzz-od\Scripts\Activate.ps1
         uv pip install pyinstaller
         
+    - name: Download and extract UPX
+      shell: pwsh
+      run: |
+        Invoke-WebRequest -Uri "https://github.com/upx/upx/releases/download/v4.2.3/upx-4.2.3-win64.zip" -OutFile "upx.zip"
+        Expand-Archive -Path "upx.zip" -DestinationPath "upx" -Force
+
     - name: Build executables
       shell: pwsh
       run: |
         .\zzz-od\Scripts\Activate.ps1
         cd deploy
-        pyinstaller --onefile --windowed --uac-admin --icon="../assets/ui/installer_logo.ico" --add-data "../config/project.yml;config" ../src/zzz_od/gui/zzz_installer.py -n "OneDragon Installer"
-        pyinstaller --onefile --uac-admin --icon="../assets/ui/zzz_logo.ico" ../src/zzz_od/win_exe/full_launcher.py -n "OneDragon Launcher"
-        pyinstaller --onefile --uac-admin --icon="../assets/ui/scheduler_logo.ico" ../src/zzz_od/win_exe/scheduler_launcher.py -n "OneDragon Scheduler"
+        $upxDir = "..\..\upx\upx-4.2.3-win64"
+        pyinstaller --onefile --windowed --uac-admin --icon="../assets/ui/installer_logo.ico" --add-data "../config/project.yml;config" --upx-dir="$upxDir" ../src/zzz_od/gui/zzz_installer.py -n "OneDragon Installer"
+        pyinstaller --onefile --uac-admin --icon="../assets/ui/zzz_logo.ico" --upx-dir="$upxDir" ../src/zzz_od/win_exe/full_launcher.py -n "OneDragon Launcher"
+        pyinstaller --onefile --uac-admin --icon="../assets/ui/scheduler_logo.ico" --upx-dir="$upxDir" ../src/zzz_od/win_exe/scheduler_launcher.py -n "OneDragon Scheduler"
         
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
