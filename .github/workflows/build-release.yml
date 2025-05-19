@@ -1,0 +1,154 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a release with current build'
+        required: true
+        default: false
+        type: boolean
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Set up Python 3.11.9
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11.9'
+        
+    - name: Install uv
+      shell: pwsh
+      run: |
+        Invoke-WebRequest -Uri https://astral.sh/uv/install.ps1 -OutFile install.ps1
+        .\install.ps1
+        
+    - name: Create and activate virtual environment
+      shell: pwsh
+      run: |
+        uv venv zzz-od --python=3.11.9
+        .\zzz-od\Scripts\Activate.ps1
+        
+    - name: Install dependencies
+      shell: pwsh
+      run: |
+        uv pip install -r requirements-dev.txt
+        uv pip install -r requirements-dev-ext.txt
+        uv pip compile --annotation-style=line --output-file=requirements-prod.txt requirements-dev.txt
+        
+    - name: Install PyInstaller
+      shell: pwsh
+      run: |
+        uv pip install pyinstaller
+        
+    - name: Build executables
+      shell: pwsh
+      run: |
+        cd deploy
+        pyinstaller --onefile --windowed --uac-admin --icon="../assets/ui/installer_logo.ico" --add-data "../config/project.yml;config" ../src/zzz_od/gui/zzz_installer.py -n "OneDragon Installer"
+        pyinstaller --onefile --uac-admin --icon="../assets/ui/zzz_logo.ico" ../src/zzz_od/win_exe/full_launcher.py -n "OneDragon Launcher"
+        pyinstaller --onefile --uac-admin --icon="../assets/ui/scheduler_logo.ico" ../src/zzz_od/win_exe/scheduler_launcher.py -n "OneDragon Scheduler"
+        
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: executables
+        path: |
+          deploy/dist/OneDragon Installer.exe
+          deploy/dist/OneDragon Launcher.exe
+          deploy/dist/OneDragon Scheduler.exe
+
+  release:
+    needs: build
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.create_release == true || startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Get version
+      id: get_version
+      run: |
+        if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        else
+          echo "version=${GITHUB_SHA}" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: executables
+        path: deploy/dist
+        
+    - name: Prepare additional files and folders
+      shell: pwsh
+      run: |
+        # Create .env directory and download files
+        New-Item -ItemType Directory -Path "deploy/dist/.env" -Force
+        Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile "deploy/dist/.env/get-pip.py"
+        # PortableGit.zip
+        Invoke-WebRequest -Uri "https://github.com/DoctorReid/OneDragon-Env/releases/download/portable/PortableGit.zip" -OutFile "deploy/dist/.env/PortableGit.zip"
+        # Python
+        Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip" -OutFile "deploy/dist/.env/python-3.11.9-embed-amd64.zip"
+
+        # Create config directory and copy project.yml
+        New-Item -ItemType Directory -Path "deploy/dist/config" -Force
+        Copy-Item "config/project.yml" -Destination "deploy/dist/config/"
+
+        # Create assets directory structure
+        New-Item -ItemType Directory -Path "deploy/dist/assets/ui" -Force
+        New-Item -ItemType Directory -Path "deploy/dist/assets/models/onnx_ocr" -Force
+        New-Item -ItemType Directory -Path "deploy/dist/assets/models/flash_classifier" -Force
+        New-Item -ItemType Directory -Path "deploy/dist/assets/models/hollow_zero_event" -Force
+        New-Item -ItemType Directory -Path "deploy/dist/assets/models/lost_void_det" -Force
+
+        # Copy UI files
+        Copy-Item "assets/ui/*" -Destination "deploy/dist/assets/ui/" -Recurse
+        Copy-Item "assets/models/onnx_ocr/*" -Destination "deploy/dist/assets/models/onnx_ocr/" -Recurse
+
+        # Download and extract model files
+        $tempDir = "temp_models"
+        New-Item -ItemType Directory -Path $tempDir -Force
+
+        # Download and extract flash classifier
+        Invoke-WebRequest -Uri "https://github.com/DoctorReid/OneDragon-YOLO/releases/download/zzz_model/yolov8n-640-flash-0127.zip" -OutFile "$tempDir/flash.zip"
+        Expand-Archive -Path "$tempDir/flash.zip" -DestinationPath "deploy/dist/assets/models/flash_classifier" -Force
+
+        # Download and extract hollow zero event
+        Invoke-WebRequest -Uri "https://github.com/DoctorReid/OneDragon-YOLO/releases/download/zzz_model/yolov8s-736-hollow-zero-event-0126.zip" -OutFile "$tempDir/hollow.zip"
+        Expand-Archive -Path "$tempDir/hollow.zip" -DestinationPath "deploy/dist/assets/models/hollow_zero_event" -Force
+
+        # Download and extract lost void detection
+        Invoke-WebRequest -Uri "https://github.com/DoctorReid/OneDragon-YOLO/releases/download/zzz_model/yolov8n-736-lost-void-det-0125.zip" -OutFile "$tempDir/lost.zip"
+        Expand-Archive -Path "$tempDir/lost.zip" -DestinationPath "deploy/dist/assets/models/lost_void_det" -Force
+
+        # Clean up temp directory
+        Remove-Item -Path $tempDir -Recurse -Force
+
+        # Create final zip archive
+        Compress-Archive -Path "deploy/dist/*" -DestinationPath "deploy/dist/OneDragon.zip" -Force
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.get_version.outputs.version }}
+        name: "Release ${{ steps.get_version.outputs.version }}"
+        files: deploy/dist/OneDragon.zip
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
