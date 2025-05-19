@@ -121,7 +121,7 @@ jobs:
         # Create .env directory and download files
         New-Item -ItemType Directory -Path "deploy/dist/.env" -Force
         Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile "deploy/dist/.env/get-pip.py"
-        # MinGit 作为 PortableGit.zip
+        # MinGit
         Invoke-WebRequest -Uri "https://github.com/git-for-windows/git/releases/download/v2.49.0.windows.1/MinGit-2.49.0-busybox-64-bit.zip" -OutFile "deploy/dist/.env/PortableGit.zip"
         # Python
         Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip" -OutFile "deploy/dist/.env/python-3.11.9-embed-amd64.zip"
@@ -160,20 +160,26 @@ jobs:
         # Clean up temp directory
         Remove-Item -Path $tempDir -Recurse -Force
 
-        # Create final zip archive
-        Compress-Archive -Path "deploy/dist/*" -DestinationPath "deploy/dist/OneDragon.zip" -Force
-
         # Get version
         $version = "${{ steps.get_version.outputs.version }}"
 
+        # Temp
+        $rootDir = "deploy/dist/ZenlessZoneZero-OneDragon"
+        New-Item -ItemType Directory -Path $rootDir -Force
+
+        # Move previous build
+        Get-ChildItem -Path "deploy/dist" -Exclude "*.zip" | ForEach-Object {
+          Move-Item $_.FullName -Destination $rootDir -Force
+        }
+
         # Pack Full
-        Compress-Archive -Path "deploy/dist/*" -DestinationPath "deploy/dist/ZenlessZoneZero-OneDragon-$version-Full.zip" -Force
+        Compress-Archive -Path "$rootDir/*" -DestinationPath "deploy/dist/ZenlessZoneZero-OneDragon-$version-Full.zip" -Force
 
         # Pack Update
         Compress-Archive -Path @(
-          "deploy/dist/OneDragon Installer.exe",
-          "deploy/dist/OneDragon Launcher.exe",
-          "deploy/dist/OneDragon Scheduler.exe"
+          "$rootDir/OneDragon Installer.exe",
+          "$rootDir/OneDragon Launcher.exe",
+          "$rootDir/OneDragon Scheduler.exe"
         ) -DestinationPath "deploy/dist/ZenlessZoneZero-OneDragon-$version-Update.zip" -Force
 
     - name: Create Release
