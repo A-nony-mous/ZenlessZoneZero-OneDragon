@@ -88,10 +88,19 @@ jobs:
       run: |
         if ($env:GITHUB_REF -like 'refs/tags/*') {
           $version = $env:GITHUB_REF.Substring(10)
+          $tag = $version
         } else {
-          $version = $env:GITHUB_SHA
+          $short = $env:GITHUB_SHA.Substring(0,7)
+          $date = Get-Date -Format 'yyyyMMdd-HHmmss'
+          $tag = "manual-$date-$short"
+          $version = $tag
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+          git tag $tag
+          git push origin $tag
         }
         echo "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        echo "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
     
     - name: Download build artifacts
       uses: actions/download-artifact@v4
@@ -105,7 +114,7 @@ jobs:
         # Create .env directory and download files
         New-Item -ItemType Directory -Path "deploy/dist/.env" -Force
         Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile "deploy/dist/.env/get-pip.py"
-        # MinGit
+        # MinGit 作为 PortableGit.zip
         Invoke-WebRequest -Uri "https://github.com/git-for-windows/git/releases/download/v2.49.0.windows.1/MinGit-2.49.0-busybox-64-bit.zip" -OutFile "deploy/dist/.env/PortableGit.zip"
         # Python
         Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip" -OutFile "deploy/dist/.env/python-3.11.9-embed-amd64.zip"
@@ -163,7 +172,7 @@ jobs:
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: ${{ steps.get_version.outputs.version }}
+        tag_name: ${{ steps.get_version.outputs.tag }}
         name: "Release ${{ steps.get_version.outputs.version }}"
         files: |
           deploy/dist/ZenlessZoneZero-OneDragon-${{ steps.get_version.outputs.version }}-Full.zip
