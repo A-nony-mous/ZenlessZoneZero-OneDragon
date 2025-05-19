@@ -39,11 +39,11 @@ jobs:
       shell: pwsh
       run: |
         uv venv zzz-od --python=3.11.9
-        .\zzz-od\Scripts\Activate.ps1
-        
+
     - name: Install dependencies
       shell: pwsh
       run: |
+        .\zzz-od\Scripts\Activate.ps1
         uv pip install -r requirements-dev.txt
         uv pip install -r requirements-dev-ext.txt
         uv pip compile --annotation-style=line --output-file=requirements-prod.txt requirements-dev.txt
@@ -51,11 +51,13 @@ jobs:
     - name: Install PyInstaller
       shell: pwsh
       run: |
+        .\zzz-od\Scripts\Activate.ps1
         uv pip install pyinstaller
         
     - name: Build executables
       shell: pwsh
       run: |
+        .\zzz-od\Scripts\Activate.ps1
         cd deploy
         pyinstaller --onefile --windowed --uac-admin --icon="../assets/ui/installer_logo.ico" --add-data "../config/project.yml;config" ../src/zzz_od/gui/zzz_installer.py -n "OneDragon Installer"
         pyinstaller --onefile --uac-admin --icon="../assets/ui/zzz_logo.ico" ../src/zzz_od/win_exe/full_launcher.py -n "OneDragon Launcher"
@@ -143,12 +145,27 @@ jobs:
         # Create final zip archive
         Compress-Archive -Path "deploy/dist/*" -DestinationPath "deploy/dist/OneDragon.zip" -Force
 
+        # Get version
+        $version = "${{ steps.get_version.outputs.version }}"
+
+        # Pack Full
+        Compress-Archive -Path "deploy/dist/*" -DestinationPath "deploy/dist/ZenlessZoneZero-OneDragon-$version-Full.zip" -Force
+
+        # Pack Update
+        Compress-Archive -Path @(
+          "deploy/dist/OneDragon Installer.exe",
+          "deploy/dist/OneDragon Launcher.exe",
+          "deploy/dist/OneDragon Scheduler.exe"
+        ) -DestinationPath "deploy/dist/ZenlessZoneZero-OneDragon-$version-Update.zip" -Force
+
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ steps.get_version.outputs.version }}
         name: "Release ${{ steps.get_version.outputs.version }}"
-        files: deploy/dist/OneDragon.zip
+        files: |
+          deploy/dist/ZenlessZoneZero-OneDragon-${{ steps.get_version.outputs.version }}-Full.zip
+          deploy/dist/ZenlessZoneZero-OneDragon-${{ steps.get_version.outputs.version }}-Update.zip
         generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
