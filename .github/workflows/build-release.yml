@@ -168,8 +168,10 @@ jobs:
         New-Item -ItemType Directory -Path $rootDir -Force
 
         # Move previous build
-        Get-ChildItem -Path "deploy/dist" -Exclude "*.zip" | ForEach-Object {
-          Move-Item $_.FullName -Destination $rootDir -Force
+        Get-ChildItem -Path "deploy/dist" | Where-Object {
+            $_.Name -ne "ZenlessZoneZero-OneDragon" -and $_.Extension -ne ".zip"
+        } | ForEach-Object {
+            Copy-Item $_.FullName -Destination $rootDir -Recurse -Force
         }
 
         # Pack Full
