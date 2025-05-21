@@ -69,7 +69,7 @@ jobs:
       run: |
         .\zzz-od\Scripts\Activate.ps1
         cd deploy
-        $upxDir = "..\..\upx\upx-4.2.3-win64"
+        $upxDir = "..\zzz-od\Scripts\upx\upx-4.2.3-win64"
         pyinstaller --onefile --windowed --uac-admin --icon="../assets/ui/installer_logo.ico" --add-data "../config/project.yml;config" --upx-dir="$upxDir" ../src/zzz_od/gui/zzz_installer.py -n "OneDragon Installer"
         pyinstaller --onefile --uac-admin --icon="../assets/ui/zzz_logo.ico" --upx-dir="$upxDir" ../src/zzz_od/win_exe/full_launcher.py -n "OneDragon Launcher"
         pyinstaller --onefile --uac-admin --icon="../assets/ui/scheduler_logo.ico" --upx-dir="$upxDir" ../src/zzz_od/win_exe/scheduler_launcher.py -n "OneDragon Scheduler"
