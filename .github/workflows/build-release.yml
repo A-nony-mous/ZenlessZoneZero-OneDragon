@@ -155,8 +155,8 @@ jobs:
         Copy-Item "$distDir/OneDragon Scheduler.exe" -Destination $rootDir -Force
 
         # assets
-        Copy-Item "assets/ui" -Destination "$rootDir/assets" -Recurse -Force
-        Copy-Item "assets/models/onnx_ocr" -Destination "$rootDir/assets/models" -Recurse -Force
+        Copy-Item "assets/ui" -Destination "$rootDir/assets/ui" -Recurse -Force
+        Copy-Item "assets/models/onnx_ocr" -Destination "$rootDir/assets/models/onnx_ocr" -Recurse -Force
 
         # model route
         $modelBase = "$rootDir/assets/models"
