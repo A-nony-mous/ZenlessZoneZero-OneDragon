@@ -59,7 +59,8 @@ class SettingCustomInterface(VerticalScrollInterface):
         self.banner_opt.hBoxLayout.addSpacing(16)
         basic_group.addSettingCard(self.banner_opt)
 
-        self.remote_banner_opt = SwitchSettingCard(icon=FluentIcon.CLOUD, title='自动更新至当前版本背景', content='关闭后不再自动获取更新')
+        # 新增：远端主页背景开关
+        self.remote_banner_opt = SwitchSettingCard(icon=FluentIcon.CLOUD, title='启用官方动态主页背景', content='关闭后仅用本地图片')
         self.remote_banner_opt.value_changed.connect(self._on_remote_banner_changed)
         basic_group.addSettingCard(self.remote_banner_opt)
 
@@ -102,6 +103,8 @@ class SettingCustomInterface(VerticalScrollInterface):
                 self.banner_select_btn.setEnabled(True)
         else:
             self.banner_select_btn.setDisabled(True)
+        # 自动刷新主页 Banner
+        self._refresh_home_banner()
 
     def _on_banner_select_clicked(self) -> None:
         """
@@ -116,25 +119,29 @@ class SettingCustomInterface(VerticalScrollInterface):
             os_utils.get_path_under_work_dir('custom', 'assets', 'ui'),
             'banner')
             shutil.copyfile(file_path, banner_path)
-            self._show_dialog_after_banner_updated()
+            # 自动刷新主页 Banner
+            self._refresh_home_banner()
 
     def _show_dialog_after_banner_updated(self):
-        """显示设置主页背景后的对话框"""
-        dialog = Dialog("主页背景已更新", "是否立即重启以应用更改?", self)
-        dialog.setTitleBarVisible(False)
-        dialog.yesButton.setText("重启")
-        dialog.cancelButton.setText("稍后")
-        if dialog.exec():
-            from one_dragon.utils import app_utils
-            app_utils.start_one_dragon(restart=True)
+        """设置主页背景后不再弹窗，直接刷新主页"""
+        # 直接刷新主页 Banner，无需弹窗
+        self._refresh_home_banner()
+        # 如果需要提示可用 InfoBar 或状态栏提示
 
     def _on_remote_banner_changed(self, value: bool) -> None:
         self.ctx.custom_config.use_remote_banner = value
         self.ctx.custom_config.save()
-        dialog = Dialog("主页背景已更新", "是否立即重启以应用更改?", self)
-        dialog.setTitleBarVisible(False)
-        dialog.yesButton.setText("重启")
-        dialog.cancelButton.setText("稍后")
-        if dialog.exec():
-            from one_dragon.utils import app_utils
-            app_utils.start_one_dragon(restart=True)
+        # 自动刷新主页 Banner
+        self._refresh_home_banner()
+
+    def _refresh_home_banner(self):
+        """查找主页界面并刷新 Banner"""
+        # 通过多层 parent() 找到主窗口，再找到主页界面
+        main_window = self.parent()
+        while main_window and not hasattr(main_window, 'stackedWidget'):
+            main_window = main_window.parent()
+        if main_window and hasattr(main_window, 'stackedWidget'):
+            # 主页一般是第0个
+            home_interface = main_window.stackedWidget.widget(0)
+            if hasattr(home_interface, 'refresh_banner'):
+                home_interface.refresh_banner()

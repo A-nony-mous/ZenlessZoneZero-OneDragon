@@ -66,3 +66,13 @@ class Banner(QWidget):
             new_height = int(parent.height() * height_percentage)
             self.setFixedSize(new_width, new_height)
             self.update_scaled_image()
+
+    def set_banner_image(self, image_path: str):
+        """动态切换横幅图片并刷新显示"""
+        import datetime
+        print(f"[Banner] set_banner_image called at {datetime.datetime.now()} with path: {image_path}")
+        self.image_path = image_path
+        self.banner_image = self.load_banner_image(image_path)
+        print(f"[Banner] banner_image isNull: {self.banner_image.isNull() if self.banner_image else 'None'}")
+        self.update_scaled_image()
+        print(f"[Banner] update_scaled_image called, widget size: {self.size()}")

@@ -370,21 +370,28 @@ class HomeInterface(VerticalScrollInterface):
         self.main_window.switchTo(one_dragon_interface)
 
     def refresh_banner(self):
-        """根据当前配置立即切换主页背景"""
+        """重新判断并加载 Banner 路径，然后刷新 Banner"""
+        import os
+        from one_dragon.utils import os_utils
         use_remote_banner = getattr(self.ctx.custom_config, 'use_remote_banner', True)
+        use_custom_banner = getattr(self.ctx.custom_config, 'banner', False)  # 自定义主页背景开关
         custom_banner_path = os.path.join(os_utils.get_path_under_work_dir('custom', 'assets', 'ui'), 'banner')
         remote_banner_path = os.path.join(os_utils.get_path_under_work_dir('assets', 'ui'), 'remote_banner.webp')
         index_banner_path = os.path.join(os_utils.get_path_under_work_dir('assets', 'ui'), 'index.png')
-        if os.path.isfile(custom_banner_path):
+
+        print(f"[HomeInterface] refresh_banner called. use_remote_banner={use_remote_banner}, use_custom_banner={use_custom_banner}")
+        print(f"[HomeInterface] custom_banner_path={custom_banner_path}, exists={os.path.isfile(custom_banner_path)}")
+        print(f"[HomeInterface] remote_banner_path={remote_banner_path}, exists={os.path.isfile(remote_banner_path)}")
+        print(f"[HomeInterface] index_banner_path={index_banner_path}, exists={os.path.isfile(index_banner_path)}")
+
+        if use_custom_banner and os.path.isfile(custom_banner_path):
             banner_path = custom_banner_path
         elif use_remote_banner and os.path.isfile(remote_banner_path):
             banner_path = remote_banner_path
         else:
             banner_path = index_banner_path
-        self._banner_widget.banner_image = self._banner_widget.load_banner_image(banner_path)
+        print(f"[HomeInterface] set banner_path={banner_path}")
+        self._banner_path = banner_path
+        self._banner_widget.set_banner_image(banner_path)
         self._banner_widget.update_scaled_image()
         self._banner_widget.update()
-
-    def connect_setting_signal(self, setting_custom_interface):
-        # 连接设置界面的 remote_banner_changed 信号，实现切换后立即刷新主页
-        setting_custom_interface.remote_banner_changed.connect(self.refresh_banner)
