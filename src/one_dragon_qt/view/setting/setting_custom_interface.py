@@ -59,6 +59,10 @@ class SettingCustomInterface(VerticalScrollInterface):
         self.banner_opt.hBoxLayout.addSpacing(16)
         basic_group.addSettingCard(self.banner_opt)
 
+        self.remote_banner_opt = SwitchSettingCard(icon=FluentIcon.CLOUD, title='自动更新至当前版本背景', content='关闭后不再自动获取更新')
+        self.remote_banner_opt.value_changed.connect(self._on_remote_banner_changed)
+        basic_group.addSettingCard(self.remote_banner_opt)
+
         return basic_group
 
     def on_interface_shown(self) -> None:
@@ -69,6 +73,7 @@ class SettingCustomInterface(VerticalScrollInterface):
         VerticalScrollInterface.on_interface_shown(self)
         self.theme_opt.init_with_adapter(self.ctx.custom_config.get_prop_adapter('theme'))
         self.banner_opt.init_with_adapter(self.ctx.custom_config.get_prop_adapter('banner'))
+        self.remote_banner_opt.init_with_adapter(self.ctx.custom_config.get_prop_adapter('use_remote_banner'))
 
     def _on_theme_changed(self, index: int, value: str) -> None:
         """
@@ -122,3 +127,7 @@ class SettingCustomInterface(VerticalScrollInterface):
         if dialog.exec():
             from one_dragon.utils import app_utils
             app_utils.start_one_dragon(restart=True)
+
+    def _on_remote_banner_changed(self, value: bool) -> None:
+        self.ctx.custom_config.use_remote_banner = value
+        self.ctx.custom_config.save()
