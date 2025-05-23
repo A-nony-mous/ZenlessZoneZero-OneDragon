@@ -349,7 +349,7 @@ class HomeInterface(VerticalScrollInterface):
             isClosable=True,
             position=InfoBarPosition.TOP_RIGHT,
             duration=duration,
-            parent=self,
+            parent=self.main_window,  # 修改这里
         ).setCustomBackgroundColor("white", "#202020")
 
     def _show_dialog_after_code_updated(self):
@@ -396,3 +396,4 @@ class HomeInterface(VerticalScrollInterface):
         self._banner_widget.set_banner_image(banner_path)
         self._banner_widget.update_scaled_image()
         self._banner_widget.update()
+        self._show_info_bar(title=gt("背景已更新", "ui"), content=gt("新的背景已成功应用", "ui"), duration=3000)
