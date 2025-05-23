@@ -200,12 +200,13 @@ class HomeInterface(VerticalScrollInterface):
         self.main_window = parent
 
         # 主页背景优先级：自定义 > 远端 > index.png
-        use_remote_banner = getattr(self.ctx.custom_config, 'use_remote_banner', True)  # 默认兼容老配置
+        use_custom_banner = self.ctx.custom_config.banner  # 自定义主页背景开关
+        use_remote_banner = self.ctx.custom_config.use_remote_banner  # 远端主页背景开关
         custom_banner_path = os.path.join(os_utils.get_path_under_work_dir('custom', 'assets', 'ui'), 'banner')
         remote_banner_path = os.path.join(os_utils.get_path_under_work_dir('assets', 'ui'), 'remote_banner.webp')
         index_banner_path = os.path.join(os_utils.get_path_under_work_dir('assets', 'ui'), 'index.png')
 
-        if os.path.isfile(custom_banner_path):
+        if use_custom_banner and os.path.isfile(custom_banner_path):
             banner_path = custom_banner_path
         elif use_remote_banner and os.path.isfile(remote_banner_path):
             banner_path = remote_banner_path
@@ -373,8 +374,8 @@ class HomeInterface(VerticalScrollInterface):
         """重新判断并加载 Banner 路径，然后刷新 Banner"""
         import os
         from one_dragon.utils import os_utils
-        use_remote_banner = getattr(self.ctx.custom_config, 'use_remote_banner', True)
-        use_custom_banner = getattr(self.ctx.custom_config, 'banner', False)  # 自定义主页背景开关
+        use_remote_banner = self.ctx.custom_config.use_remote_banner
+        use_custom_banner = self.ctx.custom_config.banner  # 自定义主页背景开关
         custom_banner_path = os.path.join(os_utils.get_path_under_work_dir('custom', 'assets', 'ui'), 'banner')
         remote_banner_path = os.path.join(os_utils.get_path_under_work_dir('assets', 'ui'), 'remote_banner.webp')
         index_banner_path = os.path.join(os_utils.get_path_under_work_dir('assets', 'ui'), 'index.png')
