@@ -131,3 +131,10 @@ class SettingCustomInterface(VerticalScrollInterface):
     def _on_remote_banner_changed(self, value: bool) -> None:
         self.ctx.custom_config.use_remote_banner = value
         self.ctx.custom_config.save()
+        dialog = Dialog("主页背景已更新", "是否立即重启以应用更改?", self)
+        dialog.setTitleBarVisible(False)
+        dialog.yesButton.setText("重启")
+        dialog.cancelButton.setText("稍后")
+        if dialog.exec():
+            from one_dragon.utils import app_utils
+            app_utils.start_one_dragon(restart=True)
