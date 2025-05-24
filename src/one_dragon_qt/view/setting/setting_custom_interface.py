@@ -62,7 +62,7 @@ class SettingCustomInterface(VerticalScrollInterface):
 
         # 新增：远端主页背景开关
         self.remote_banner_opt = SwitchSettingCard(icon=FluentIcon.CLOUD, title='启用官方动态主页背景', content='关闭后仅用本地图片')
-        self.remote_banner_opt.value_changed.connect(self._on_remote_banner_changed)
+        self.remote_banner_opt.value_changed.connect(lambda value: self.home_interface.banner_settings_changed.emit() if self.home_interface else None)
         basic_group.addSettingCard(self.remote_banner_opt)
 
         return basic_group
@@ -135,10 +135,3 @@ class SettingCustomInterface(VerticalScrollInterface):
             # 发送信号通知主页更新背景
             if self.home_interface:
                 self.home_interface.banner_settings_changed.emit()
-
-    def _on_remote_banner_changed(self, value: bool) -> None:
-        """
-        当远端背景设置改变时触发
-        """
-        if self.home_interface:
-            self.home_interface.banner_settings_changed.emit()
