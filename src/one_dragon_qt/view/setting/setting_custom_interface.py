@@ -145,13 +145,9 @@ class SettingCustomInterface(VerticalScrollInterface):
                 self.home_interface.banner_settings_changed.emit()
 
     def _on_remote_banner_changed(self, value: bool) -> None:
-        log.info(f"[SettingCustomInterface] _on_remote_banner_changed: value={value}")
-        log.info(f"[SettingCustomInterface] home_interface: {self.home_interface}")
-        # 先发送信号
+        """
+        当远端背景设置改变时触发
+        """
         if self.home_interface:
             log.info("[SettingCustomInterface] _on_remote_banner_changed: emitting banner_settings_changed signal")
             self.home_interface.banner_settings_changed.emit()
-        else:
-            log.info("[SettingCustomInterface] _on_remote_banner_changed: home_interface is None")
-        self.ctx.custom_config.use_remote_banner = value
-        self.ctx.custom_config.save()
