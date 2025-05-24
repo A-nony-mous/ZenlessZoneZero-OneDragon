@@ -30,15 +30,6 @@ class SettingCustomInterface(VerticalScrollInterface):
             content_widget=None, parent=parent,
             nav_text_cn='自定义设置'
         )
-        
-        # 获取主页界面引用
-        main_window = self.parent()
-        while main_window and not hasattr(main_window, 'stackedWidget'):
-            main_window = main_window.parent()
-        if main_window and hasattr(main_window, 'stackedWidget'):
-            self.home_interface = main_window.stackedWidget.widget(0)
-        else:
-            self.home_interface = None
 
     def get_content_widget(self) -> QWidget:
         content_widget = Column(self)
@@ -84,12 +75,18 @@ class SettingCustomInterface(VerticalScrollInterface):
         VerticalScrollInterface.on_interface_shown(self)
         
         # 获取主页界面引用
+        log.info("[SettingCustomInterface] on_interface_shown: getting home interface...")
         main_window = self.parent()
+        log.info(f"[SettingCustomInterface] parent: {main_window}")
         while main_window and not hasattr(main_window, 'stackedWidget'):
             main_window = main_window.parent()
+            log.info(f"[SettingCustomInterface] parent after loop: {main_window}")
         if main_window and hasattr(main_window, 'stackedWidget'):
+            log.info("[SettingCustomInterface] found main window with stackedWidget")
             self.home_interface = main_window.stackedWidget.widget(0)
+            log.info(f"[SettingCustomInterface] home_interface: {self.home_interface}")
         else:
+            log.info("[SettingCustomInterface] could not find main window with stackedWidget")
             self.home_interface = None
 
         # 初始化设置项
@@ -126,7 +123,7 @@ class SettingCustomInterface(VerticalScrollInterface):
             self.banner_select_btn.setDisabled(True)
         # 发送信号通知主页更新背景
         if self.home_interface:
-            print("[SettingCustomInterface] _on_banner_changed: emitting banner_settings_changed signal")
+            log.info("[SettingCustomInterface] _on_banner_changed: emitting banner_settings_changed signal")
             self.home_interface.banner_settings_changed.emit()
 
     def _on_banner_select_clicked(self) -> None:
@@ -144,11 +141,17 @@ class SettingCustomInterface(VerticalScrollInterface):
             shutil.copyfile(file_path, banner_path)
             # 发送信号通知主页更新背景
             if self.home_interface:
+                log.info("[SettingCustomInterface] _on_banner_select_clicked: emitting banner_settings_changed signal")
                 self.home_interface.banner_settings_changed.emit()
 
     def _on_remote_banner_changed(self, value: bool) -> None:
-        # 发送信号，
+        log.info(f"[SettingCustomInterface] _on_remote_banner_changed: value={value}")
+        log.info(f"[SettingCustomInterface] home_interface: {self.home_interface}")
+        # 先发送信号
         if self.home_interface:
+            log.info("[SettingCustomInterface] _on_remote_banner_changed: emitting banner_settings_changed signal")
             self.home_interface.banner_settings_changed.emit()
+        else:
+            log.info("[SettingCustomInterface] _on_remote_banner_changed: home_interface is None")
         self.ctx.custom_config.use_remote_banner = value
         self.ctx.custom_config.save()

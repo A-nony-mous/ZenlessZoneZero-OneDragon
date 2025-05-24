@@ -319,8 +319,11 @@ class HomeInterface(VerticalScrollInterface):
         self._check_model_runner = CheckModelRunner(self.ctx)
         self._check_model_runner.need_update.connect(self._need_to_update_model)
 
-    def _on_banner_settings_changed(self):
-        """处理背景设置变更信号"""
+    def _on_banner_settings_changed(self) -> None:
+        """
+        当横幅设置改变时触发
+        """
+        log.info("[HomeInterface] _on_banner_settings_changed called")
         self.refresh_banner(show_notification=True)
 
     def on_interface_shown(self) -> None:
@@ -382,35 +385,38 @@ class HomeInterface(VerticalScrollInterface):
         one_dragon_interface = self.main_window.stackedWidget.widget(2)
         self.main_window.switchTo(one_dragon_interface)
 
-    def refresh_banner(self, show_notification: bool = False):
-        """重新判断并加载 Banner 路径，然后刷新 Banner
-        Args:
-            show_notification: 是否显示更新提示
+    def refresh_banner(self, show_notification: bool = False) -> None:
         """
-        import os
-        from one_dragon.utils import os_utils
-        use_remote_banner = self.ctx.custom_config.use_remote_banner
-        use_custom_banner = self.ctx.custom_config.banner  # 自定义主页背景开关
-        custom_banner_path = os.path.join(os_utils.get_path_under_work_dir('custom', 'assets', 'ui'), 'banner')
-        remote_banner_path = os.path.join(os_utils.get_path_under_work_dir('assets', 'ui'), 'remote_banner.webp')
-        index_banner_path = os.path.join(os_utils.get_path_under_work_dir('assets', 'ui'), 'index.png')
+        刷新横幅显示
+        :param show_notification: 是否显示提示
+        :return:
+        """
+        log.info(f"[HomeInterface] refresh_banner called. use_remote_banner={self.ctx.custom_config.use_remote_banner}, use_custom_banner={self.ctx.custom_config.banner}")
+        # 获取背景图片路径
+        custom_banner_path = os.path.join(
+            os_utils.get_path_under_work_dir('custom', 'assets', 'ui'),
+            'banner')
+        remote_banner_path = os.path.join(
+            os_utils.get_path_under_work_dir('assets', 'ui'),
+            'remote_banner.webp')
+        index_banner_path = os.path.join(
+            os_utils.get_path_under_work_dir('assets', 'ui'),
+            'index.png')
+        log.info(f"[HomeInterface] custom_banner_path={custom_banner_path}, exists={os.path.exists(custom_banner_path)}")
+        log.info(f"[HomeInterface] remote_banner_path={remote_banner_path}, exists={os.path.exists(remote_banner_path)}")
+        log.info(f"[HomeInterface] index_banner_path={index_banner_path}, exists={os.path.exists(index_banner_path)}")
 
-        print(f"[HomeInterface] refresh_banner called. use_remote_banner={use_remote_banner}, use_custom_banner={use_custom_banner}")
-        print(f"[HomeInterface] custom_banner_path={custom_banner_path}, exists={os.path.isfile(custom_banner_path)}")
-        print(f"[HomeInterface] remote_banner_path={remote_banner_path}, exists={os.path.isfile(remote_banner_path)}")
-        print(f"[HomeInterface] index_banner_path={index_banner_path}, exists={os.path.isfile(index_banner_path)}")
-
-        if use_custom_banner and os.path.isfile(custom_banner_path):
-            banner_path = custom_banner_path
-        elif use_remote_banner and os.path.isfile(remote_banner_path):
+        # 根据设置选择背景图片
+        if self.ctx.custom_config.use_remote_banner and os.path.exists(remote_banner_path):
             banner_path = remote_banner_path
+        elif self.ctx.custom_config.banner and os.path.exists(custom_banner_path):
+            banner_path = custom_banner_path
         else:
             banner_path = index_banner_path
-        print(f"[HomeInterface] set banner_path={banner_path}")
-        self._banner_path = banner_path
+        log.info(f"[HomeInterface] set banner_path={banner_path}")
+
+        # 更新背景图片
         self._banner_widget.set_banner_image(banner_path)
-        self._banner_widget.update_scaled_image()
-        self._banner_widget.update()
 
         if show_notification:
             self._show_info_bar(title=gt("背景已更新", "ui"), content=gt("新的背景已成功应用", "ui"), duration=3000)
