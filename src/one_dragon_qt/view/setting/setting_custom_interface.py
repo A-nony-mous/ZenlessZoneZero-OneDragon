@@ -75,18 +75,12 @@ class SettingCustomInterface(VerticalScrollInterface):
         VerticalScrollInterface.on_interface_shown(self)
         
         # 获取主页界面引用
-        log.info("[SettingCustomInterface] on_interface_shown: getting home interface...")
         main_window = self.parent()
-        log.info(f"[SettingCustomInterface] parent: {main_window}")
         while main_window and not hasattr(main_window, 'stackedWidget'):
             main_window = main_window.parent()
-            log.info(f"[SettingCustomInterface] parent after loop: {main_window}")
         if main_window and hasattr(main_window, 'stackedWidget'):
-            log.info("[SettingCustomInterface] found main window with stackedWidget")
             self.home_interface = main_window.stackedWidget.widget(0)
-            log.info(f"[SettingCustomInterface] home_interface: {self.home_interface}")
         else:
-            log.info("[SettingCustomInterface] could not find main window with stackedWidget")
             self.home_interface = None
 
         # 初始化设置项
@@ -123,7 +117,6 @@ class SettingCustomInterface(VerticalScrollInterface):
             self.banner_select_btn.setDisabled(True)
         # 发送信号通知主页更新背景
         if self.home_interface:
-            log.info("[SettingCustomInterface] _on_banner_changed: emitting banner_settings_changed signal")
             self.home_interface.banner_settings_changed.emit()
 
     def _on_banner_select_clicked(self) -> None:
@@ -141,7 +134,6 @@ class SettingCustomInterface(VerticalScrollInterface):
             shutil.copyfile(file_path, banner_path)
             # 发送信号通知主页更新背景
             if self.home_interface:
-                log.info("[SettingCustomInterface] _on_banner_select_clicked: emitting banner_settings_changed signal")
                 self.home_interface.banner_settings_changed.emit()
 
     def _on_remote_banner_changed(self, value: bool) -> None:
@@ -149,5 +141,4 @@ class SettingCustomInterface(VerticalScrollInterface):
         当远端背景设置改变时触发
         """
         if self.home_interface:
-            log.info("[SettingCustomInterface] _on_remote_banner_changed: emitting banner_settings_changed signal")
             self.home_interface.banner_settings_changed.emit()
