@@ -16,12 +16,13 @@ from one_dragon_qt.widgets.setting_card.combo_box_setting_card import ComboBoxSe
 from one_dragon_qt.widgets.setting_card.switch_setting_card import SwitchSettingCard
 from one_dragon.utils import os_utils
 from one_dragon.utils.i18_utils import gt
-
+from one_dragon.utils.log_utils import log
 
 class SettingCustomInterface(VerticalScrollInterface):
 
     def __init__(self, ctx: OneDragonContext, parent=None):
         self.ctx: OneDragonContext = ctx
+        self.home_interface = None
 
         VerticalScrollInterface.__init__(
             self,
@@ -29,6 +30,15 @@ class SettingCustomInterface(VerticalScrollInterface):
             content_widget=None, parent=parent,
             nav_text_cn='自定义设置'
         )
+        
+        # 获取主页界面引用
+        main_window = self.parent()
+        while main_window and not hasattr(main_window, 'stackedWidget'):
+            main_window = main_window.parent()
+        if main_window and hasattr(main_window, 'stackedWidget'):
+            self.home_interface = main_window.stackedWidget.widget(0)
+        else:
+            self.home_interface = None
 
     def get_content_widget(self) -> QWidget:
         content_widget = Column(self)
@@ -72,6 +82,17 @@ class SettingCustomInterface(VerticalScrollInterface):
         :return:
         """
         VerticalScrollInterface.on_interface_shown(self)
+        
+        # 获取主页界面引用
+        main_window = self.parent()
+        while main_window and not hasattr(main_window, 'stackedWidget'):
+            main_window = main_window.parent()
+        if main_window and hasattr(main_window, 'stackedWidget'):
+            self.home_interface = main_window.stackedWidget.widget(0)
+        else:
+            self.home_interface = None
+
+        # 初始化设置项
         self.theme_opt.init_with_adapter(self.ctx.custom_config.get_prop_adapter('theme'))
         self.banner_opt.init_with_adapter(self.ctx.custom_config.get_prop_adapter('banner'))
         self.remote_banner_opt.init_with_adapter(self.ctx.custom_config.get_prop_adapter('use_remote_banner'))
@@ -103,8 +124,10 @@ class SettingCustomInterface(VerticalScrollInterface):
                 self.banner_select_btn.setEnabled(True)
         else:
             self.banner_select_btn.setDisabled(True)
-        # 自动刷新主页 Banner
-        self._refresh_home_banner()
+        # 发送信号通知主页更新背景
+        if self.home_interface:
+            print("[SettingCustomInterface] _on_banner_changed: emitting banner_settings_changed signal")
+            self.home_interface.banner_settings_changed.emit()
 
     def _on_banner_select_clicked(self) -> None:
         """
@@ -119,29 +142,13 @@ class SettingCustomInterface(VerticalScrollInterface):
             os_utils.get_path_under_work_dir('custom', 'assets', 'ui'),
             'banner')
             shutil.copyfile(file_path, banner_path)
-            # 自动刷新主页 Banner
-            self._refresh_home_banner()
-
-    def _show_dialog_after_banner_updated(self):
-        """设置主页背景后不再弹窗，直接刷新主页"""
-        # 直接刷新主页 Banner，无需弹窗
-        self._refresh_home_banner()
-        # 如果需要提示可用 InfoBar 或状态栏提示
+            # 发送信号通知主页更新背景
+            if self.home_interface:
+                self.home_interface.banner_settings_changed.emit()
 
     def _on_remote_banner_changed(self, value: bool) -> None:
+        # 发送信号，
+        if self.home_interface:
+            self.home_interface.banner_settings_changed.emit()
         self.ctx.custom_config.use_remote_banner = value
         self.ctx.custom_config.save()
-        # 自动刷新主页 Banner
-        self._refresh_home_banner()
-
-    def _refresh_home_banner(self):
-        """查找主页界面并刷新 Banner"""
-        # 通过多层 parent() 找到主窗口，再找到主页界面
-        main_window = self.parent()
-        while main_window and not hasattr(main_window, 'stackedWidget'):
-            main_window = main_window.parent()
-        if main_window and hasattr(main_window, 'stackedWidget'):
-            # 主页一般是第0个
-            home_interface = main_window.stackedWidget.widget(0)
-            if hasattr(home_interface, 'refresh_banner'):
-                home_interface.refresh_banner()

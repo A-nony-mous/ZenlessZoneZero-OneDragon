@@ -195,6 +195,9 @@ class BannerDownloader(QThread):
 class HomeInterface(VerticalScrollInterface):
     """主页界面"""
 
+    # 添加信号
+    banner_settings_changed = Signal()
+
     def __init__(self, ctx: ZContext, parent=None):
         self.ctx: ZContext = ctx
         self.main_window = parent
@@ -292,6 +295,8 @@ class HomeInterface(VerticalScrollInterface):
             nav_icon=FluentIcon.HOME,
         )
 
+        # 连接信号
+        self.banner_settings_changed.connect(self._on_banner_settings_changed)
         # 应用样式
         OdQtStyleSheet.GAME_BUTTON.apply(gameButton)
         OdQtStyleSheet.NOTICE_CARD.apply(noticeCard)
@@ -314,12 +319,19 @@ class HomeInterface(VerticalScrollInterface):
         self._check_model_runner = CheckModelRunner(self.ctx)
         self._check_model_runner.need_update.connect(self._need_to_update_model)
 
+    def _on_banner_settings_changed(self):
+        """处理背景设置变更信号"""
+        self.refresh_banner(show_notification=True)
+
     def on_interface_shown(self) -> None:
         """界面显示时启动检查更新的线程"""
         super().on_interface_shown()
         self._check_code_runner.start()
         self._check_venv_runner.start()
         self._check_model_runner.start()
+        
+        # 检查并更新背景，但不显示提示
+        self.refresh_banner(show_notification=False)
 
     def _need_to_update_code(self, with_new: bool):
         if not with_new:
@@ -370,8 +382,11 @@ class HomeInterface(VerticalScrollInterface):
         one_dragon_interface = self.main_window.stackedWidget.widget(2)
         self.main_window.switchTo(one_dragon_interface)
 
-    def refresh_banner(self):
-        """重新判断并加载 Banner 路径，然后刷新 Banner"""
+    def refresh_banner(self, show_notification: bool = False):
+        """重新判断并加载 Banner 路径，然后刷新 Banner
+        Args:
+            show_notification: 是否显示更新提示
+        """
         import os
         from one_dragon.utils import os_utils
         use_remote_banner = self.ctx.custom_config.use_remote_banner
@@ -396,4 +411,6 @@ class HomeInterface(VerticalScrollInterface):
         self._banner_widget.set_banner_image(banner_path)
         self._banner_widget.update_scaled_image()
         self._banner_widget.update()
-        self._show_info_bar(title=gt("背景已更新", "ui"), content=gt("新的背景已成功应用", "ui"), duration=3000)
+
+        if show_notification:
+            self._show_info_bar(title=gt("背景已更新", "ui"), content=gt("新的背景已成功应用", "ui"), duration=3000)
