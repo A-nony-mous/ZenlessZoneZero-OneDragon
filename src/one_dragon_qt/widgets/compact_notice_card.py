@@ -8,8 +8,10 @@ import os
 import time
 import requests
 import re
+import hashlib
+from pathlib import Path
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Dict, Set
 from PySide6.QtCore import Qt, QSize, Signal, QThread, QRectF, QTimer, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QFont, QPixmap
 from PySide6.QtWidgets import (
@@ -20,7 +22,7 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     SimpleCardWidget, FluentIcon, qconfig, Theme,
     NavigationInterface, NavigationItemPosition, NavigationPushButton,
-    ScrollArea, SingleDirectionScrollArea, TabBar
+    ScrollArea, SingleDirectionScrollArea, TabBar, TextBrowser
 )
 from one_dragon.utils.log_utils import log
 
@@ -57,30 +59,176 @@ class MarkdownParser:
     """Markdown解析器"""
 
     @staticmethod
-    def parse(markdown_content: str) -> dict:
-        """解析Markdown内容"""
-        # 简单解析，提取标题和内容
+    def parse(markdown_content: str, source_url: str = None) -> dict:
+        """解析Markdown内容
+        
+        Args:
+            markdown_content: Markdown原始内容
+            source_url: 源URL，用于解析相对路径
+        """
+        # 提取标题
         lines = markdown_content.split('\n')
         title = "内容"
-        content_lines = []
 
         for line in lines:
             if line.startswith('# '):
                 title = line[2:].strip()
-            elif line.strip():
-                # 移除Markdown语法
-                clean_line = re.sub(r'[#*`\[\]()]', '', line)
-                content_lines.append(clean_line)
+                break
+
+        # 处理内容，移除YAML front matter
+        content_lines = []
+        in_front_matter = False
+
+        for line in lines:
+            # 跳过YAML front matter
+            if line.strip() == '---':
+                if not in_front_matter:
+                    in_front_matter = True
+                    continue
+                else:
+                    in_front_matter = False
+                    continue
+
+            if in_front_matter:
+                continue
+
+            content_lines.append(line)
+
+        # 重新组合内容
+        processed_content = '\n'.join(content_lines)
+
+        # 处理图片URL（转换相对路径为绝对路径）
+        if source_url:
+            processed_content = MarkdownParser._process_image_urls(processed_content, source_url)
 
         # 限制内容长度，避免显示过多
-        content = '\n'.join(content_lines[:20])  # 只显示前20行
-        if len(content) > 500:
-            content = content[:500] + '...'
+        if len(processed_content) > 2000:
+            # 找到第一个段落结束的位置
+            first_paragraph_end = processed_content.find('\n\n', 1500)
+            if first_paragraph_end > 0:
+                processed_content = processed_content[:first_paragraph_end] + '\n\n...'
+            else:
+                processed_content = processed_content[:2000] + '...'
 
+        # 转换为HTML以更好地支持图片
+        html_content = MarkdownParser._markdown_to_html(processed_content)
+
+        # 提取所有图片URL
+        image_urls = MarkdownParser._extract_image_urls(html_content)
+        
         return {
             "title": title,
-            "content": content
+            "content": processed_content,
+            "html": html_content,
+            "image_urls": list(image_urls)  # 转换Set为List以支持JSON序列化
         }
+    
+    @staticmethod
+    def _process_image_urls(content: str, source_url: str) -> str:
+        """处理图片URL，将相对路径转换为绝对路径"""
+        # 解析基础URL
+        if 'github.com' in source_url or 'githubusercontent.com' in source_url:
+            # GitHub Raw URL处理
+            base_parts = source_url.rsplit('/', 1)[0]
+            
+            # 查找所有图片标签
+            image_pattern = r'!\[([^\]]*)\]\(([^\)]+)\)'
+            
+            def replace_image_url(match):
+                alt_text = match.group(1)
+                url = match.group(2)
+                
+                # 如果是相对路径，转换为绝对路径
+                if not url.startswith(('http://', 'https://')):
+                    if url.startswith('/'):
+                        # 以/开头的路径，需要获取域名部分
+                        # 从GitHub raw URL中提取基础部分
+                        if 'githubusercontent.com' in base_parts:
+                            # 例如: https://raw.githubusercontent.com/user/repo/branch/path
+                            # 需要保留到branch部分
+                            parts = base_parts.split('/')
+                            # 找到githubusercontent.com后的第4个部分（branch）
+                            base_url = '/'.join(parts[:7])  # 保留到branch
+                            url = f"{base_url}{url}"
+                        else:
+                            url = f"{base_parts}{url}"
+                    elif url.startswith('./'):
+                        # 当前目录的相对路径
+                        url = f"{base_parts}/{url[2:]}"
+                    elif url.startswith('../'):
+                        # 处理上级目录
+                        parent_parts = base_parts.rsplit('/', 1)[0]
+                        url = f"{parent_parts}/{url[3:]}"
+                    else:
+                        # 普通相对路径
+                        url = f"{base_parts}/{url}"
+                
+                return f'![{alt_text}]({url})'
+            
+            content = re.sub(image_pattern, replace_image_url, content)
+        
+        return content
+    
+    @staticmethod
+    def _markdown_to_html(markdown_content: str) -> str:
+        """将Markdown转换为HTML（简单实现）"""
+        html = markdown_content
+        
+        # 转换标题
+        html = re.sub(r'^### (.+)$', r'<h3>\1</h3>', html, flags=re.MULTILINE)
+        html = re.sub(r'^## (.+)$', r'<h2>\1</h2>', html, flags=re.MULTILINE)
+        html = re.sub(r'^# (.+)$', r'<h1>\1</h1>', html, flags=re.MULTILINE)
+        
+        # 转换代码块（先处理代码块，避免内部内容被其他规则影响）
+        html = re.sub(r'```([^`]+)```', r'<pre><code>\1</code></pre>', html, flags=re.DOTALL)
+        html = re.sub(r'`([^`]+)`', r'<code>\1</code>', html)
+        
+        # 转换图片 - 必须在链接之前处理！
+        html = re.sub(r'!\[([^\]]*)\]\(([^\)]+)\)', 
+                     r'<img src="\2" alt="\1" style="max-width: 100%; height: auto;" />', html)
+        
+        # 转换链接（在图片之后处理）
+        html = re.sub(r'\[([^\]]+)\]\(([^\)]+)\)', r'<a href="\2">\1</a>', html)
+        
+        # 转换粗体（避免与列表标记冲突）
+        html = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', html)
+        html = re.sub(r'__(.+?)__', r'<b>\1</b>', html)
+        
+        # 转换斜体（避免与列表标记冲突）
+        html = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', html)
+        html = re.sub(r'(?<!_)_(?!_)(.+?)(?<!_)_(?!_)', r'<i>\1</i>', html)
+        
+        # 转换列表
+        html = re.sub(r'^\* (.+)$', r'<li>\1</li>', html, flags=re.MULTILINE)
+        html = re.sub(r'^- (.+)$', r'<li>\1</li>', html, flags=re.MULTILINE)
+        html = re.sub(r'^\d+\. (.+)$', r'<li>\1</li>', html, flags=re.MULTILINE)
+        
+        # 转换段落
+        paragraphs = html.split('\n\n')
+        html_paragraphs = []
+        for p in paragraphs:
+            p = p.strip()
+            if p and not p.startswith('<'):
+                p = f'<p>{p}</p>'
+            html_paragraphs.append(p)
+        html = '\n'.join(html_paragraphs)
+        
+        # 包装列表项
+        html = re.sub(r'(<li>.*</li>)', r'<ul>\1</ul>', html, flags=re.DOTALL)
+        
+        return html
+    
+    @staticmethod
+    def _extract_image_urls(html_content: str) -> Set[str]:
+        """从HTML内容中提取所有图片URL"""
+        image_urls = set()
+        # 匹配img标签中的src属性
+        img_pattern = r'<img[^>]+src="([^"]+)"'
+        matches = re.findall(img_pattern, html_content)
+        for url in matches:
+            if url and not url.startswith('file:///'):
+                image_urls.add(url)
+        return image_urls
 
 
 class ContentFetcher(QThread):
@@ -88,6 +236,7 @@ class ContentFetcher(QThread):
     content_fetched = Signal(dict)
 
     CACHE_DIR = "notice_cache"
+    IMAGE_CACHE_DIR = "notice_cache/images"
     CACHE_DURATION = 86400  # 1天缓存
     TIMEOUT = 5
 
@@ -99,6 +248,8 @@ class ContentFetcher(QThread):
             self.CACHE_DIR,
             f"{hash(url)}.json"
         )
+        # 确保图片缓存目录存在
+        os.makedirs(self.IMAGE_CACHE_DIR, exist_ok=True)
 
     def run(self):
         """获取内容"""
@@ -115,7 +266,10 @@ class ContentFetcher(QThread):
             response.raise_for_status()
 
             if self.content_type == "markdown":
-                data = MarkdownParser.parse(response.text)
+                data = MarkdownParser.parse(response.text, self.url)
+                # 下载并缓存图片
+                if "image_urls" in data and data["image_urls"]:
+                    data["html"] = self._download_and_replace_images(data["html"], data["image_urls"])
             else:
                 data = response.json()
 
@@ -143,6 +297,54 @@ class ContentFetcher(QThread):
         os.makedirs(self.CACHE_DIR, exist_ok=True)
         with open(self.cache_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+    
+    def _download_and_replace_images(self, html_content: str, image_urls: list) -> str:
+        """下载图片并替换HTML中的URL为本地路径"""
+        for url in image_urls:
+            try:
+                # 生成本地文件名
+                url_hash = hashlib.md5(url.encode()).hexdigest()
+                # 尝试从URL获取文件扩展名
+                ext = '.png'  # 默认扩展名
+                if '.' in url:
+                    potential_ext = url.rsplit('.', 1)[-1].lower()
+                    if potential_ext in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp']:
+                        ext = f'.{potential_ext}'
+                
+                local_filename = f"{url_hash}{ext}"
+                local_path = os.path.join(self.IMAGE_CACHE_DIR, local_filename)
+                
+                # 如果图片已缓存且未过期，直接使用
+                if os.path.exists(local_path):
+                    cache_time = os.path.getmtime(local_path)
+                    if time.time() - cache_time < self.CACHE_DURATION:
+                        # 使用本地路径替换URL（使用绝对路径）
+                        absolute_path = os.path.abspath(local_path)
+                        file_url = f"file:///{absolute_path.replace(os.sep, '/')}"
+                        html_content = html_content.replace(f'src="{url}"', f'src="{file_url}"')
+                        continue
+                
+                # 下载图片
+                log.info(f"下载图片: {url}")
+                img_response = requests.get(url, timeout=self.TIMEOUT)
+                img_response.raise_for_status()
+                
+                # 保存图片
+                with open(local_path, 'wb') as f:
+                    f.write(img_response.content)
+                
+                # 使用本地路径替换URL（使用绝对路径）
+                absolute_path = os.path.abspath(local_path)
+                file_url = f"file:///{absolute_path.replace(os.sep, '/')}"
+                html_content = html_content.replace(f'src="{url}"', f'src="{file_url}"')
+                log.info(f"图片已缓存: {local_filename}")
+                
+            except Exception as e:
+                log.error(f"下载图片失败 {url}: {e}")
+                # 如果下载失败，保持原URL
+                continue
+        
+        return html_content
 
 
 class EnhancedAcrylicBackground(QWidget):
@@ -244,15 +446,20 @@ class ContentView(ScrollArea):
         self.title_label.setFont(title_font)
         self.content_layout.addWidget(self.title_label)
 
-        # 内容
-        self.content_label = QLabel("正在加载内容...")
-        self.content_label.setObjectName("contentText")
-        self.content_label.setWordWrap(True)
-        self.content_label.setTextFormat(Qt.TextFormat.PlainText)
+        # 内容 - 使用TextBrowser支持Markdown渲染
+        self.content_browser = TextBrowser()
+        self.content_browser.setObjectName("contentText")
+        self.content_browser.setOpenExternalLinks(True)  # 允许点击链接
+        self.content_browser.setMaximumHeight(250)  # 增加高度以显示更多内容
+        # 启用图片加载
+        self.content_browser.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextBrowserInteraction | 
+            Qt.TextInteractionFlag.LinksAccessibleByMouse
+        )
         content_font = QFont()
-        content_font.setPointSize(10)
-        self.content_label.setFont(content_font)
-        self.content_layout.addWidget(self.content_label)
+        content_font.setPointSize(9)  # 稍微减小字体
+        self.content_browser.setFont(content_font)
+        self.content_layout.addWidget(self.content_browser)
 
         self.content_layout.addStretch()
         self.setWidget(self.content_widget)
@@ -277,13 +484,21 @@ class ContentView(ScrollArea):
             }}
             #contentText {{
                 color: {subtitle_color};
+                background: transparent;
+                border: none;
             }}
         """)
 
     def set_content(self, data: dict):
         """设置内容"""
         self.title_label.setText(data.get("title", ""))
-        self.content_label.setText(data.get("content", ""))
+        
+        # 优先使用HTML内容（如果有）以更好地支持图片
+        if "html" in data and data["html"]:
+            self.content_browser.setHtml(data["html"])
+        else:
+            # 回退到Markdown渲染
+            self.content_browser.setMarkdown(data.get("content", ""))
 
 
 class CompactNoticeCard(SimpleCardWidget):
