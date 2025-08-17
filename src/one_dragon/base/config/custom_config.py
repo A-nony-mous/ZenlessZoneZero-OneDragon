@@ -199,3 +199,17 @@ class CustomConfig(YamlConfig):
         当前主题色对应的背景图片修改时间戳
         """
         self.update('theme_color_banner_mtime', new_value)
+
+    @property
+    def use_compact_notice_card(self) -> bool:
+        """
+        是否使用新的紧凑型通知卡片
+        """
+        return self.get('use_compact_notice_card', True)
+
+    @use_compact_notice_card.setter
+    def use_compact_notice_card(self, new_value: bool) -> None:
+        """
+        是否使用新的紧凑型通知卡片
+        """
+        self.update('use_compact_notice_card', new_value)

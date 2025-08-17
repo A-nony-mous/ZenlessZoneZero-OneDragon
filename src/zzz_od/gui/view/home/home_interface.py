@@ -329,16 +329,7 @@ class HomeInterface(VerticalScrollInterface):
         bottom_bar = QWidget()
         h2_layout = QHBoxLayout(bottom_bar)
         h2_layout.setAlignment(Qt.AlignmentFlag.AlignBottom)
-
-        h2_layout.setContentsMargins(20, 20, 20, 20)  # 整体底部边距20px，包含阴影
-
-        # 左边添加弹性空白以居中布局
-        h2_layout.addStretch(1)
-
-        # 根据配置设置启用状态
-        self.notice_container.set_notice_enabled(self.ctx.custom_config.notice_card)
-
-        h2_layout.addStretch()
+        h2_layout.setContentsMargins(20, 0, 20, 0)  # 左右20px边距，上下不需要
 
         # 启动游戏按钮布局
         self.start_button = PrimaryPushButton(text="启动一条龙🚀")
@@ -357,35 +348,8 @@ class HomeInterface(VerticalScrollInterface):
         shadow.setColor(QColor(0, 0, 0, 120))
         self.start_button.setGraphicsEffect(shadow)
 
-        # @A-nony-mous 2025-08-15T03:50:00+01:00
-        # noticecard的高度和启动一条龙按钮的高度 谁能修谁自己tm修吧我是修不明白了
-        # 核心是阴影+到底部margin的高度=20px
-
-
-
-        # 计算阴影向下扩展：min(20, max(0, offsetY + blurRadius/2))
-        shadow_down_extent = max(0, int(8 + 24 / 2))  # 8 偏移 + 12 模糊半径的一半 ≈ 20
-        shadow_down_extent = min(20, shadow_down_extent)
-        # 20px = 阴影高度 + 阴影到底部的高度 ⇒ 按钮容器底边距 = 阴影高度
-
-        # 与按钮对齐：提升公告卡片相同的底边距
-
-        if hasattr(self, '_notice_wrap_layout'):
-            self._notice_wrap_layout.setContentsMargins(0, 0, 0, shadow_down_extent)
-
-        # 按钮容器，整体距离底部20px（包含阴影）
-        button_container = QWidget()
-        button_v_layout = QVBoxLayout(button_container)
-        button_v_layout.setContentsMargins(0, 0, 0, shadow_down_extent)
-        button_v_layout.addStretch()
-        button_v_layout.addWidget(self.start_button, alignment=Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter)
-
-        h2_layout.addWidget(button_container)
-
-
-
-        # 将底部容器添加到主垂直布局
-        v_layout.addWidget(bottom_bar)
+        # 计算阴影向下扩展，以确保阴影不超出底部
+        shadow_down_extent = 20  # 底部边距20px（不含阴影）
 
         # 初始化父类
         super().__init__(
@@ -396,23 +360,42 @@ class HomeInterface(VerticalScrollInterface):
             nav_icon=FluentIcon.HOME,
         )
 
-        # 创建默认的内容配置
-        content_config = ContentConfig.create_default_config()
-        self.notice_container = CompactNoticeCardContainer(content_config=content_config, parent=self)
+        # 根据配置选择创建通知卡片组件
+        if self.ctx.custom_config.use_compact_notice_card:
+            # 使用新的紧凑型通知卡片
+            content_config = ContentConfig.create_default_config()
+            self.notice_container = CompactNoticeCardContainer(content_config=content_config, parent=bottom_bar)
+        else:
+            # 使用旧的通知卡片
+            self.notice_container = NoticeCardContainer(parent=bottom_bar)
+        
+        # 设置通知启用状态
         self.notice_container.set_notice_enabled(self.ctx.custom_config.notice_card)
 
-        # 将通知卡片添加到布局中
-        # 添加到底部布局，与启动按钮并排
-        # 将卡片插入到正确的位置（在第一个stretch之后）
-        h2_layout.insertWidget(1, self.notice_container)
+        # 通知卡片容器，距底部20px
+        notice_container_wrapper = QWidget()
+        notice_v_layout = QVBoxLayout(notice_container_wrapper)
+        notice_v_layout.setContentsMargins(0, 0, 0, shadow_down_extent)
+        notice_v_layout.addStretch()
+        notice_v_layout.addWidget(self.notice_container, alignment=Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignLeft)
 
-        # 中间添加一些空白分隔
-        h2_layout.insertWidget(2, button_container)
+        # 按钮容器，距底部20px
+        button_container = QWidget()
+        button_v_layout = QVBoxLayout(button_container)
+        button_v_layout.setContentsMargins(0, 0, 0, shadow_down_extent)
+        button_v_layout.addStretch()
+        button_v_layout.addWidget(self.start_button, alignment=Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight)
 
-        # 右边也添加一些空白以平衡布局
-        h2_layout.addStretch(1)
+        # 重新组织底部布局：通知卡片（左）- 弹性空间（中）- 启动按钮（右）
+        h2_layout.addWidget(notice_container_wrapper)
+        h2_layout.addStretch()  # 中间的弹性空间
+        h2_layout.addWidget(button_container)
 
-        QTimer.singleShot(0, self._update_start_button_style_from_banner)
+        # 将底部容器添加到主垂直布局
+        v_layout.addWidget(bottom_bar)
+
+        # 立即应用按钮样式，确保胶囊形状
+        self._update_start_button_style_from_banner()
 
         self.ctx = ctx
         self._init_check_runners()
@@ -580,11 +563,8 @@ class HomeInterface(VerticalScrollInterface):
             log.debug("start_button 不存在，跳过样式更新")
             return
 
-        # 检查是否能使用缓存
+        # 获取当前背景路径
         current_banner_path = self.choose_banner_image()
-        if self._can_use_cached_theme_color(current_banner_path):
-            log.debug(f"使用缓存的主题色，跳过样式更新: {current_banner_path}")
-            return
 
         # 获取主题色
         theme_color = self._get_theme_color()

@@ -56,6 +56,13 @@ class SettingCustomInterface(VerticalScrollInterface):
         self.notice_card_opt.value_changed.connect(lambda: setattr(self.ctx.signal, 'notice_card_config_changed', True))
         basic_group.addSettingCard(self.notice_card_opt)
 
+        self.compact_notice_card_opt = SwitchSettingCard(
+            icon=FluentIcon.TILES, 
+            title='使用紧凑型公告卡片', 
+            content='关闭后使用旧版公告卡片（需要重启生效）'
+        )
+        basic_group.addSettingCard(self.compact_notice_card_opt)
+
         self.version_poster_opt = SwitchSettingCard(icon=FluentIcon.IMAGE_EXPORT, title='启用版本海报', content='版本活动海报持续整个版本')
         self.version_poster_opt.value_changed.connect(self._on_version_poster_changed)
         basic_group.addSettingCard(self.version_poster_opt)
@@ -90,6 +97,7 @@ class SettingCustomInterface(VerticalScrollInterface):
         self.ui_language_opt.init_with_adapter(self.ctx.custom_config.get_prop_adapter('ui_language'))
         self.theme_opt.init_with_adapter(self.ctx.custom_config.get_prop_adapter('theme'))
         self.notice_card_opt.init_with_adapter(self.ctx.custom_config.get_prop_adapter('notice_card'))
+        self.compact_notice_card_opt.init_with_adapter(self.ctx.custom_config.get_prop_adapter('use_compact_notice_card'))
         self.custom_banner_opt.init_with_adapter(self.ctx.custom_config.get_prop_adapter('custom_banner'))
         self.remote_banner_opt.init_with_adapter(self.ctx.custom_config.get_prop_adapter('remote_banner'))
         self.version_poster_opt.init_with_adapter(self.ctx.custom_config.get_prop_adapter('version_poster'))
