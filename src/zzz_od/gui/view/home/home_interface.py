@@ -28,6 +28,7 @@ from one_dragon.utils.log_utils import log
 from one_dragon_qt.utils.color_utils import ColorUtils
 from one_dragon_qt.widgets.banner import Banner
 from one_dragon_qt.widgets.icon_button import IconButton
+from one_dragon_qt.widgets.compact_notice_card import CompactNoticeCardContainer, ContentConfig
 from one_dragon_qt.widgets.notice_card import NoticeCardContainer
 from one_dragon_qt.widgets.vertical_scroll_interface import (
     VerticalScrollInterface,
@@ -331,13 +332,8 @@ class HomeInterface(VerticalScrollInterface):
 
         h2_layout.setContentsMargins(20, 20, 20, 20)  # 整体底部边距20px，包含阴影
 
-        # 公告卡片
-        self.notice_container = NoticeCardContainer()
-        notice_wrap = QWidget()
-        self._notice_wrap_layout = QVBoxLayout(notice_wrap)
-        self._notice_wrap_layout.setContentsMargins(0, 0, 0, 0)
-        self._notice_wrap_layout.addWidget(self.notice_container)
-        h2_layout.addWidget(notice_wrap)
+        # 左边添加弹性空白以居中布局
+        h2_layout.addStretch(1)
 
         # 根据配置设置启用状态
         self.notice_container.set_notice_enabled(self.ctx.custom_config.notice_card)
@@ -399,6 +395,22 @@ class HomeInterface(VerticalScrollInterface):
             nav_text_cn="仪表盘",
             nav_icon=FluentIcon.HOME,
         )
+
+        # 创建默认的内容配置
+        content_config = ContentConfig.create_default_config()
+        self.notice_container = CompactNoticeCardContainer(content_config=content_config, parent=self)
+        self.notice_container.set_notice_enabled(self.ctx.custom_config.notice_card)
+
+        # 将通知卡片添加到布局中
+        # 添加到底部布局，与启动按钮并排
+        # 将卡片插入到正确的位置（在第一个stretch之后）
+        h2_layout.insertWidget(1, self.notice_container)
+
+        # 中间添加一些空白分隔
+        h2_layout.insertWidget(2, button_container)
+
+        # 右边也添加一些空白以平衡布局
+        h2_layout.addStretch(1)
 
         QTimer.singleShot(0, self._update_start_button_style_from_banner)
 
