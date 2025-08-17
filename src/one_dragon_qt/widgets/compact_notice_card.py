@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     SimpleCardWidget, FluentIcon, qconfig, Theme,
     NavigationInterface, NavigationItemPosition, NavigationPushButton,
-    ScrollArea, SingleDirectionScrollArea
+    ScrollArea, SingleDirectionScrollArea, TabBar
 )
 from one_dragon.utils.log_utils import log
 
@@ -183,51 +183,39 @@ class EnhancedAcrylicBackground(QWidget):
         painter.drawPath(path)
 
 
-class NavigationBar(QWidget):
-    """左侧导航栏"""
+class NavigationBar(TabBar):
+    """顶部TabBar导航栏"""
     category_changed = Signal(str)  # 发送分类ID
 
     def __init__(self, categories: List[ContentCategory], parent=None):
         super().__init__(parent)
         self.categories = categories
         self.current_category = categories[0].id if categories else ""
-        self.buttons = {}
+
+        # 禁用关闭标签页功能
+        self.setTabsClosable(False)
+        self.setAddButtonVisible(False)
         self._init_ui()
 
     def _init_ui(self):
         """初始化UI"""
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(4)
-
-        # 创建导航按钮
+        # 添加tab项
         for category in self.categories:
-            btn = NavigationPushButton(
-                icon=category.icon,
+            self.addTab(
+                routeKey=category.id,
                 text=category.title,
-                isSelectable=True,
-                parent=self
+                icon=category.icon,
+                onClick=lambda cat_id=category.id: self._on_category_clicked(cat_id)
             )
-            btn.clicked.connect(lambda checked, cat_id=category.id: self._on_category_clicked(cat_id))
-            layout.addWidget(btn)
-            self.buttons[category.id] = btn
-
-        layout.addStretch()
 
         # 设置默认选中
-        if self.current_category in self.buttons:
-            self.buttons[self.current_category].setSelected(True)
+        if self.current_category:
+            self.setCurrentTab(self.current_category)
 
     def _on_category_clicked(self, category_id: str):
         """分类点击处理"""
         if category_id == self.current_category:
             return
-
-        # 更新选中状态
-        if self.current_category in self.buttons:
-            self.buttons[self.current_category].setSelected(False)
-        if category_id in self.buttons:
-            self.buttons[category_id].setSelected(True)
 
         self.current_category = category_id
         self.category_changed.emit(category_id)
@@ -314,24 +302,17 @@ class CompactNoticeCard(SimpleCardWidget):
         # 增强的亚克力背景
         self.acrylic_bg = EnhancedAcrylicBackground(self, radius=8)
 
-        # 主布局
-        self.main_layout = QHBoxLayout(self)
+        # 主布局 - 改为垂直布局
+        self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
 
-        # 左侧导航栏（宽度150）
+        # 顶部导航栏（TabBar格式）
         self.nav_bar = NavigationBar(self.content_config.categories, self)
-        self.nav_bar.setFixedWidth(150)
         self.nav_bar.category_changed.connect(self._on_category_changed)
         self.main_layout.addWidget(self.nav_bar)
 
-        # 分隔线
-        separator = QFrame()
-        separator.setFrameStyle(QFrame.Shape.VLine)
-        separator.setStyleSheet("QFrame { color: rgba(255, 255, 255, 30); }")
-        self.main_layout.addWidget(separator)
-
-        # 右侧内容区
+        # 内容区
         self.content_view = ContentView(self)
         self.main_layout.addWidget(self.content_view, 1)
 
