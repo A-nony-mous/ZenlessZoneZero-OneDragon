@@ -349,7 +349,7 @@ class HomeInterface(VerticalScrollInterface):
         self.start_button.setGraphicsEffect(shadow)
 
         # 计算阴影向下扩展，以确保阴影不超出底部
-        shadow_down_extent = 20  # 底部边距20px（不含阴影）
+        shadow_down_extent = 30  # 底部边距30px（不含阴影）
 
         # 初始化父类
         super().__init__(
@@ -394,14 +394,14 @@ class HomeInterface(VerticalScrollInterface):
         # 将底部容器添加到主垂直布局
         v_layout.addWidget(bottom_bar)
 
-        # 立即应用按钮样式，确保胶囊形状
-        self._update_start_button_style_from_banner()
-
         self.ctx = ctx
         self._init_check_runners()
 
-        # 监听背景刷新信号，确保主题色在背景变化时更新
+        # 监听背景刷新信号
         self._last_reload_banner_signal = False
+        
+        # 启动时异步更新主题色（只在时间戳变化时才真正更新）
+        self._init_theme_color_async()
 
     def _init_check_runners(self):
         """初始化检查更新的线程"""
@@ -466,7 +466,7 @@ class HomeInterface(VerticalScrollInterface):
         self._check_banner_reload_signal()
 
         # 初始化主题色，避免navbar颜色闪烁
-        self._update_start_button_style_from_banner()
+        self._update_theme_from_banner()
 
     def _need_to_update_code(self, with_new: bool):
         if not with_new:
@@ -514,8 +514,8 @@ class HomeInterface(VerticalScrollInterface):
 
             # 更新背景图片
             self._banner_widget.set_banner_image(self.choose_banner_image())
-            # 依据背景重新计算按钮配色
-            self._update_start_button_style_from_banner()
+            # 依据背景重新提取主题色
+            self._update_theme_from_banner()
             self.ctx.signal.reload_banner = False
             if show_notification:
                 self._show_info_bar("背景已更新", "新的背景已成功应用", 3000)
@@ -553,27 +553,18 @@ class HomeInterface(VerticalScrollInterface):
         """检查背景重新加载信号"""
         if self.ctx.signal.reload_banner != self._last_reload_banner_signal:
             if self.ctx.signal.reload_banner:
-                self._update_start_button_style_from_banner()
+                self._update_theme_from_banner()
             self._last_reload_banner_signal = self.ctx.signal.reload_banner
 
-    def _update_start_button_style_from_banner(self) -> None:
-        """从当前背景取主色，应用到启动按钮。"""
-        # 确保按钮存在
-        if not hasattr(self, 'start_button'):
-            log.debug("start_button 不存在，跳过样式更新")
-            return
-
-        # 获取当前背景路径
-        current_banner_path = self.choose_banner_image()
-
+    def _update_theme_from_banner(self) -> None:
+        """从当前背景提取主题色并更新全局主题管理器"""
         # 获取主题色
         theme_color = self._get_theme_color()
 
         # 更新全局主题色
         self._update_global_theme(theme_color)
-
-        # 应用按钮样式
-        self._apply_button_style(theme_color)
+        
+        log.debug(f"主题色已更新: RGB({theme_color[0]}, {theme_color[1]}, {theme_color[2]})")
 
     def _get_theme_color(self) -> tuple[int, int, int]:
         """获取主题色，优先使用缓存，否则从图片提取"""
@@ -632,25 +623,6 @@ class HomeInterface(VerticalScrollInterface):
         """更新全局主题色管理器"""
         theme_manager.set_theme_color(theme_color, self.ctx)
 
-    def _apply_button_style(self, theme_color: tuple[int, int, int]) -> None:
-        """应用样式到启动按钮"""
-        lr, lg, lb = theme_color
-        text_color = ColorUtils.get_text_color_for_background(lr, lg, lb)
-
-        # 本按钮局部样式：圆角为高度一半（胶囊形），背景从图取色
-        radius = 24  # 固定按钮高度48px的一半，确保胶囊形状
-
-        style_sheet = f"""
-        background-color: rgb({lr}, {lg}, {lb});
-        color: {text_color};
-        border-radius: {radius}px;
-        border: none;
-        font-weight: bold;
-        margin: 0px;
-        padding: 0px;
-        """
-        self.start_button.setStyleSheet(style_sheet)
-
     def _clear_theme_color_cache(self) -> None:
         """清空主题色缓存"""
         self.ctx.custom_config.theme_color_banner_path = ''
@@ -694,3 +666,24 @@ class HomeInterface(VerticalScrollInterface):
             self.ctx.custom_config.theme_color_banner_mtime = os.path.getmtime(banner_path)
         except OSError:
             self.ctx.custom_config.theme_color_banner_mtime = 0.0
+    
+    def _init_theme_color_async(self) -> None:
+        """异步初始化主题色（只在时间戳变化时才真正更新）"""
+        # 使用QTimer异步执行，避免阻塞UI
+        QTimer.singleShot(100, self._update_theme_if_needed)
+    
+    def _update_theme_if_needed(self) -> None:
+        """检查并更新主题色（只在文件时间戳变化时）"""
+        current_banner_path = self.choose_banner_image()
+        
+        # 如果可以使用缓存，直接设置已缓存的主题色
+        if self._can_use_cached_theme_color(current_banner_path):
+            theme_color = self.ctx.custom_config.global_theme_color
+            theme_manager.set_theme_color(theme_color, self.ctx)
+            log.debug(f"应用缓存的主题色: RGB({theme_color[0]}, {theme_color[1]}, {theme_color[2]})")
+        else:
+            # 需要重新提取主题色
+            log.debug("背景图片已变化，重新提取主题色")
+            theme_color = self._extract_color_from_image()
+            self._update_theme_color_cache(current_banner_path, theme_color)
+            theme_manager.set_theme_color(theme_color, self.ctx)
