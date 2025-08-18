@@ -449,25 +449,33 @@ class HomeInterface(VerticalScrollInterface):
                     thread.stop()
 
     def on_interface_shown(self) -> None:
-        """界面显示时启动检查更新的线程"""
+        """界面显示时的处理"""
         super().on_interface_shown()
-        self._check_code_runner.start()
-        self._check_model_runner.start()
-        self._check_banner_runner.start()
-        # 根据配置启动相应的背景下载器
-        if self.ctx.custom_config.version_poster:
-            self._version_poster_downloader.start()
-        elif self.ctx.custom_config.remote_banner:
-            self._banner_downloader.start()
-
-        # 检查公告卡片配置是否变化
+        
+        # 使用QTimer异步启动线程，避免阻塞UI
+        QTimer.singleShot(50, self._start_check_threads)
+        
+        # 检查配置变化（这些操作很快）
         self._check_notice_config_change()
-
-        # 检查背景是否需要刷新
         self._check_banner_reload_signal()
 
-        # 初始化主题色，避免navbar颜色闪烁
-        self._update_theme_from_banner()
+    def _start_check_threads(self) -> None:
+        """异步启动检查线程，避免阻塞UI"""
+        # 只启动未运行的线程
+        if not self._check_code_runner.isRunning():
+            self._check_code_runner.start()
+        if not self._check_model_runner.isRunning():
+            self._check_model_runner.start()
+        if not self._check_banner_runner.isRunning():
+            self._check_banner_runner.start()
+        
+        # 根据配置启动背景下载器
+        if self.ctx.custom_config.version_poster:
+            if not self._version_poster_downloader.isRunning():
+                self._version_poster_downloader.start()
+        elif self.ctx.custom_config.remote_banner:
+            if not self._banner_downloader.isRunning():
+                self._banner_downloader.start()
 
     def _need_to_update_code(self, with_new: bool):
         if not with_new:
@@ -515,8 +523,8 @@ class HomeInterface(VerticalScrollInterface):
 
             # 更新背景图片
             self._banner_widget.set_banner_image(self.choose_banner_image())
-            # 依据背景重新提取主题色
-            self._update_theme_from_banner()
+            # 强制重新提取主题色
+            self._apply_theme_color(force_update=True)
             self.ctx.signal.reload_banner = False
             if show_notification:
                 self._show_info_bar("背景已更新", "新的背景已成功应用", 3000)
@@ -543,15 +551,16 @@ class HomeInterface(VerticalScrollInterface):
         return banner_path
 
     def _check_notice_config_change(self):
-        """检查公告卡片配置是否发生变化"""
+        """检查公告卡片配置变化"""
+        # 检查公告卡片启用/禁用状态
         if self.ctx.signal.notice_card_config_changed:
             current_config = self.ctx.custom_config.notice_card
-            self._notice_enabled_state = current_config
-            self.notice_container.set_notice_enabled(current_config)
-            # 重置信号状态
+            if self._notice_enabled_state != current_config:
+                self._notice_enabled_state = current_config
+                self.notice_container.set_notice_enabled(current_config)
             self.ctx.signal.notice_card_config_changed = False
         
-        # 检查是否需要切换公告卡片类型
+        # 检查公告卡片类型切换
         if hasattr(self.ctx.signal, 'compact_notice_card_config_changed') and self.ctx.signal.compact_notice_card_config_changed:
             self._switch_notice_container_type()
             self.ctx.signal.compact_notice_card_config_changed = False
@@ -560,7 +569,7 @@ class HomeInterface(VerticalScrollInterface):
         """检查背景重新加载信号"""
         if self.ctx.signal.reload_banner != self._last_reload_banner_signal:
             if self.ctx.signal.reload_banner:
-                self._update_theme_from_banner()
+                self._apply_theme_color(force_update=True)
             self._last_reload_banner_signal = self.ctx.signal.reload_banner
 
     def _switch_notice_container_type(self) -> None:
@@ -608,33 +617,23 @@ class HomeInterface(VerticalScrollInterface):
             log.error(f"切换通知卡片类型时出错: {e}")
             self._show_info_bar("切换失败", "通知卡片切换出现错误，请重启应用", 5000)
 
-    def _update_theme_from_banner(self) -> None:
-        """从当前背景提取主题色并更新全局主题管理器"""
-        # 获取主题色
-        theme_color = self._get_theme_color()
-
-        # 更新全局主题色
-        self._update_global_theme(theme_color)
-        
-        log.debug(f"主题色已更新: RGB({theme_color[0]}, {theme_color[1]}, {theme_color[2]})")
-
-    def _get_theme_color(self) -> tuple[int, int, int]:
-        """获取主题色，优先使用缓存，否则从图片提取"""
+    def _apply_theme_color(self, force_update: bool = False) -> None:
+        """应用主题色，智能检查是否需要更新"""
         current_banner_path = self.choose_banner_image()
-
-        # 检查是否能使用缓存的主题色
-        if self._can_use_cached_theme_color(current_banner_path):
-            lr, lg, lb = self.ctx.custom_config.global_theme_color
-            log.debug(f"使用缓存的主题色: ({lr}, {lg}, {lb})")
-            return lr, lg, lb
-
-        # 背景图片改变了，需要重新提取颜色
-        theme_color = self._extract_color_from_image()
-
-        # 更新缓存
-        self._update_theme_color_cache(current_banner_path, theme_color)
-
-        return theme_color
+        
+        # 检查是否需要更新主题色
+        if force_update or not self._can_use_cached_theme_color(current_banner_path):
+            # 需要重新提取主题色
+            theme_color = self._extract_color_from_image()
+            self._update_theme_color_cache(current_banner_path, theme_color)
+            log.debug(f"主题色已更新: RGB({theme_color[0]}, {theme_color[1]}, {theme_color[2]})")
+        else:
+            # 使用缓存的主题色
+            theme_color = self.ctx.custom_config.global_theme_color
+            log.debug(f"使用缓存主题色: RGB({theme_color[0]}, {theme_color[1]}, {theme_color[2]})")
+        
+        # 应用主题色到管理器
+        theme_manager.set_theme_color(theme_color, self.ctx)
 
     def _extract_color_from_image(self) -> tuple[int, int, int]:
         """从背景图片提取主题色"""
@@ -671,10 +670,6 @@ class HomeInterface(VerticalScrollInterface):
 
         return lr, lg, lb
 
-    def _update_global_theme(self, theme_color: tuple[int, int, int]) -> None:
-        """更新全局主题色管理器"""
-        theme_manager.set_theme_color(theme_color, self.ctx)
-
     def _clear_theme_color_cache(self) -> None:
         """清空主题色缓存"""
         self.ctx.custom_config.theme_color_banner_path = ''
@@ -699,11 +694,9 @@ class HomeInterface(VerticalScrollInterface):
             cached_mtime = self.ctx.custom_config.theme_color_banner_mtime
 
             if current_mtime != cached_mtime:
-                # 文件已被修改，不能使用缓存
                 return False
 
         except OSError:
-            # 无法获取文件时间戳，为安全起见不使用缓存
             return False
 
         return True
@@ -720,22 +713,5 @@ class HomeInterface(VerticalScrollInterface):
             self.ctx.custom_config.theme_color_banner_mtime = 0.0
     
     def _init_theme_color_async(self) -> None:
-        """异步初始化主题色（只在时间戳变化时才真正更新）"""
-        # 使用QTimer异步执行，避免阻塞UI
-        QTimer.singleShot(100, self._update_theme_if_needed)
-    
-    def _update_theme_if_needed(self) -> None:
-        """检查并更新主题色（只在文件时间戳变化时）"""
-        current_banner_path = self.choose_banner_image()
-        
-        # 如果可以使用缓存，直接设置已缓存的主题色
-        if self._can_use_cached_theme_color(current_banner_path):
-            theme_color = self.ctx.custom_config.global_theme_color
-            theme_manager.set_theme_color(theme_color, self.ctx)
-            log.debug(f"应用缓存的主题色: RGB({theme_color[0]}, {theme_color[1]}, {theme_color[2]})")
-        else:
-            # 需要重新提取主题色
-            log.debug("背景图片已变化，重新提取主题色")
-            theme_color = self._extract_color_from_image()
-            self._update_theme_color_cache(current_banner_path, theme_color)
-            theme_manager.set_theme_color(theme_color, self.ctx)
+        """异步初始化主题色"""
+        QTimer.singleShot(100, self._apply_theme_color)
