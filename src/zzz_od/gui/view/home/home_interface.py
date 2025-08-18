@@ -370,7 +370,8 @@ class HomeInterface(VerticalScrollInterface):
             self.notice_container = NoticeCardContainer(parent=bottom_bar)
         
         # 设置通知启用状态
-        self.notice_container.set_notice_enabled(self.ctx.custom_config.notice_card)
+        self._notice_enabled_state = self.ctx.custom_config.notice_card
+        self.notice_container.set_notice_enabled(self._notice_enabled_state)
 
         # 通知卡片容器，距底部20px
         notice_container_wrapper = QWidget()
@@ -545,9 +546,15 @@ class HomeInterface(VerticalScrollInterface):
         """检查公告卡片配置是否发生变化"""
         if self.ctx.signal.notice_card_config_changed:
             current_config = self.ctx.custom_config.notice_card
+            self._notice_enabled_state = current_config
             self.notice_container.set_notice_enabled(current_config)
             # 重置信号状态
             self.ctx.signal.notice_card_config_changed = False
+        
+        # 检查是否需要切换公告卡片类型
+        if hasattr(self.ctx.signal, 'compact_notice_card_config_changed') and self.ctx.signal.compact_notice_card_config_changed:
+            self._switch_notice_container_type()
+            self.ctx.signal.compact_notice_card_config_changed = False
 
     def _check_banner_reload_signal(self):
         """检查背景重新加载信号"""
@@ -555,6 +562,51 @@ class HomeInterface(VerticalScrollInterface):
             if self.ctx.signal.reload_banner:
                 self._update_theme_from_banner()
             self._last_reload_banner_signal = self.ctx.signal.reload_banner
+
+    def _switch_notice_container_type(self) -> None:
+        """动态切换通知卡片类型"""
+        try:
+            # 获取当前布局和父容器
+            notice_container_wrapper = self.notice_container.parent()
+            notice_v_layout = notice_container_wrapper.layout()
+            
+            # 保存当前配置状态
+            current_enabled_state = self._notice_enabled_state
+            
+            # 移除旧的通知容器
+            notice_v_layout.removeWidget(self.notice_container)
+            self.notice_container.setParent(None)
+            self.notice_container.deleteLater()
+            
+            # 根据新配置创建新的通知容器
+            if self.ctx.custom_config.use_compact_notice_card:
+                # 使用新的紧凑型通知卡片
+                content_config = ContentConfig.create_default_config()
+                self.notice_container = CompactNoticeCardContainer(
+                    content_config=content_config, 
+                    parent=notice_container_wrapper
+                )
+            else:
+                # 使用旧的通知卡片
+                self.notice_container = NoticeCardContainer(parent=notice_container_wrapper)
+            
+            # 恢复通知启用状态
+            self.notice_container.set_notice_enabled(current_enabled_state)
+            
+            # 将新容器添加到布局中
+            notice_v_layout.addWidget(
+                self.notice_container,
+                alignment=Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignLeft
+            )
+            
+            # 强制更新布局
+            notice_container_wrapper.update()
+            
+            self._show_info_bar("通知卡片已切换", "新的通知卡片样式已应用", 3000)
+            
+        except Exception as e:
+            log.error(f"切换通知卡片类型时出错: {e}")
+            self._show_info_bar("切换失败", "通知卡片切换出现错误，请重启应用", 5000)
 
     def _update_theme_from_banner(self) -> None:
         """从当前背景提取主题色并更新全局主题管理器"""

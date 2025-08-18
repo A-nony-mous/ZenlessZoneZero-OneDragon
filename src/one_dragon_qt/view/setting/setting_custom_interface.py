@@ -58,9 +58,10 @@ class SettingCustomInterface(VerticalScrollInterface):
 
         self.compact_notice_card_opt = SwitchSettingCard(
             icon=FluentIcon.TILES, 
-            title='使用紧凑型公告卡片', 
-            content='关闭后使用旧版公告卡片（需要重启生效）'
+            title='使用新版公告卡片',
+            content='关闭后使用旧版公告卡片'
         )
+        self.compact_notice_card_opt.value_changed.connect(lambda: setattr(self.ctx.signal, 'compact_notice_card_config_changed', True))
         basic_group.addSettingCard(self.compact_notice_card_opt)
 
         self.version_poster_opt = SwitchSettingCard(icon=FluentIcon.IMAGE_EXPORT, title='启用版本海报', content='版本活动海报持续整个版本')
