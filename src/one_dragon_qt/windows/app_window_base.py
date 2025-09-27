@@ -1,5 +1,5 @@
 import os
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QSize, QTimer
 from PySide6.QtGui import QIcon
 from qfluentwidgets import NavigationItemPosition, SplashScreen
 from typing import Optional
@@ -39,16 +39,21 @@ class AppWindowBase(PhosWindow):
         self.show()
 
         self.stackedWidget.currentChanged.connect(self.init_interface_on_shown)
-        self.create_sub_interface()
-
-        # 隐藏启动页面
-        self.splashScreen.finish()
+        QTimer.singleShot(0, self.initialize_sub_interface)
 
         self.titleBar.issue_url = f"{project_config.github_homepage}/issues"
 
+    def initialize_sub_interface(self) -> None:
+        """
+        创建子页面并隐藏启动页面
+        :return:
+        """
+        self.create_sub_interface()
+        self.splashScreen.finish()
+
     def create_sub_interface(self) -> None:
         """
-        创建子页面
+        创建和添加各个子界面
         :return:
         """
         pass
