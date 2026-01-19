@@ -1,5 +1,6 @@
 try:
     import sys
+    import os
     from typing import Tuple
     from PySide6.QtCore import Qt, QThread, Signal, QTimer
     from PySide6.QtWidgets import QApplication
@@ -55,6 +56,18 @@ try:
             import time
             self._app_start_time = time.time()
 
+            # 图标加载逻辑优化
+            # 1. 优先尝试包内资源 (Briefcase 标准路径)
+            icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources", "zzz_od.ico")
+
+            if not os.path.exists(icon_path):
+                # 2. 回退到传统的外部资源路径 (兼容现有 CI/Source 运行模式)
+                fallback_path = os.path.join("assets", "ui", "logo.ico")
+                if os.path.exists(fallback_path):
+                     icon_path = fallback_path
+                else:
+                     icon_path = "logo.ico" # 最后的默认回退
+
             AppWindowBase.__init__(
                 self,
                 win_title="%s %s"
@@ -63,7 +76,7 @@ try:
                     ctx.one_dragon_config.current_active_instance.name,
                 ),
                 project_config=ctx.project_config,
-                app_icon="logo.ico",
+                app_icon=icon_path,
                 parent=parent,
             )
 
@@ -313,8 +326,16 @@ except Exception:
     _init_error = f"启动一条龙失败，报错信息如下:\n{stack_trace}"
 
 
-# 初始化应用程序，并启动主窗口
-if __name__ == "__main__":
+
+def main():
+    import os
+    # Briefcase fix: Initialize data bundling
+    try:
+        from zzz_od.bundle_init import ensure_runtime_data
+        ensure_runtime_data()
+    except Exception as e:
+        print(f"Bundle init failed: {e}")
+
     if _init_error is not None:
         # 显示错误弹窗，询问用户是否打开排障文档
         error_message = f"启动一条龙失败,报错信息如下:\n{stack_trace}\n\n是否打开排障文档查看解决方案?"
@@ -353,3 +374,21 @@ if __name__ == "__main__":
     app.exec()
 
     _ctx.after_app_shutdown()
+
+
+# 初始化应用程序，并启动主窗口
+if __name__ == "__main__":
+    import os
+    import sys
+
+    # 将 src 目录添加到 sys.path
+    # 仅在源码运行模式下执行，打包模式下 (sys.frozen) 不需要也不应该修改 sys.path
+    if not getattr(sys, 'frozen', False):
+        # app.py 位于 src/zzz_od/gui/app.py
+        # 需要向上 2 层找到 src (gui -> zzz_od -> src)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        src_dir = os.path.dirname(os.path.dirname(current_dir))
+        if src_dir not in sys.path:
+            sys.path.insert(0, src_dir)
+
+    main()

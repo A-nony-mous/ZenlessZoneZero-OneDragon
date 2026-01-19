@@ -1,8 +1,8 @@
 [project]
 name = "ZenlessZoneZero-OneDragon"
 version = "2.0.0"
-description = "绝区零 一条龙 | 全自动 | 自动闪避 | 自动每日 | 自动空洞 | 支持手柄"
-requires-python = ">=3.11.9,<3.12"
+description = "Zenless Zone Zero OneDragon | Auto Daily | Auto Hollow | Gamepad Support"
+requires-python = "==3.11.*"
 dependencies = [
     "pyside6==6.8.0.2",
     "pyside6-fluent-widgets==1.7.0",
@@ -83,3 +83,112 @@ skip-magic-trailing-comma = false
 
 # Like Black, automatically detect the appropriate line ending.
 line-ending = "auto"
+
+
+
+# Briefcase configuration
+[tool.briefcase]
+project_name = "ZenlessZoneZero-OneDragon"
+bundle = "com.one-dragon.zzz"
+version = "2.0.0"
+url = "https://zzz.one-dragon.com"
+license.file = "LICENSE"
+author = "OneDragon Team"
+author_email = "one-dragon@example.com"
+icon = "src/zzz_od/resources/zzz_od"
+
+[tool.briefcase.app.zzz_od]
+formal_name = "ZenlessZoneZero-OneDragon"
+
+sources = [
+    "src/zzz_od",
+    "src/one_dragon",
+    "src/one_dragon_qt",
+    "src/onnxocr",
+    "assets",
+    "config",
+]
+icon = "src/zzz_od/resources/zzz_od"
+test_sources = [
+    "tests",
+]
+
+requires = [
+    "pyside6==6.8.0.2",
+    "pyside6-fluent-widgets==1.7.0",
+    "pyyaml==6.0.1",
+    "opencv-python==4.10.0.84",
+    "pyautogui==0.9.54",
+    "pynput==1.7.7",
+    "onnxruntime-directml==1.18.0",
+    "mss==9.0.1",
+    "shapely==2.0.4",
+    "pyclipper==1.3.0.post5",
+    "soundcard==0.4.3",
+    "librosa==0.10.2.post1",
+    "gensim==4.3.3",
+    "pygit2==1.19.0",
+]
+test_requires = [
+    "pytest",
+]
+
+[tool.briefcase.app.zzz_od.macOS]
+universal_build = true
+requires = [
+]
+
+[tool.briefcase.app.zzz_od.linux]
+requires = [
+]
+
+[tool.briefcase.app.zzz_od.linux.system.debian]
+system_requires = [
+]
+
+system_runtime_requires = [
+]
+
+[tool.briefcase.app.zzz_od.linux.system.rhel]
+system_requires = [
+]
+
+system_runtime_requires = [
+]
+
+[tool.briefcase.app.zzz_od.linux.system.suse]
+system_requires = [
+]
+
+system_runtime_requires = [
+]
+
+[tool.briefcase.app.zzz_od.linux.system.arch]
+system_requires = [
+]
+
+system_runtime_requires = [
+]
+
+[tool.briefcase.app.zzz_od.linux.flatpak]
+flatpak_runtime = "org.freedesktop.Platform"
+flatpak_runtime_version = "23.08"
+flatpak_sdk = "org.freedesktop.Sdk"
+
+[tool.briefcase.app.zzz_od.windows]
+requires = [
+]
+
+# Mobile deployments
+[tool.briefcase.app.zzz_od.iOS]
+requires = [
+]
+
+[tool.briefcase.app.zzz_od.android]
+requires = [
+]
+
+# Web deployments
+[tool.briefcase.app.zzz_od.web]
+requires = [
+]
