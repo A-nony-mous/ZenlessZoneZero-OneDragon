@@ -354,6 +354,8 @@ Write-Host 'nupkg 内所有 OneDragon.exe / Update.exe 签名均为 Valid'
 
    `.bundle_seed_status.json` 是第 2 轮返工新增的**按目录**播种版本记录（`{"template": "0.1.0-beta.1", "ui": ..., "text": ..., "game_data": ...}`）；根层 `.bundle_seed_version` 仍然只在四类目录全部成功后才写。两个文件都要在，缺前者说明播种逻辑回退了。
 
+   > **D5 口径**：`current\sq.version` 是 nuspec XML，播种代码必须解析出其中的 `<version>` 节点后再写标记。两个文件里都只能是**纯版本号**（如 `0.1.0-beta.1`），不能是 XML 全文、也不能是空串。第 5 步给出具体断言。
+
 4. 断言四类只读资源文件数（S4，动态比对，不写死数字）：
 
    > **只读资源覆盖规则（S4）**：`assets/template`、`assets/ui`、`assets/text`、`assets/game_data` 这四类目录在**升级（包版本变化）时由包内版本整体覆盖**——旧版本残留文件会被删除，手工修改也会被抹掉。因此不要手工改这四个目录；模板产出请放 `custom/` 或按 S4 建议迁出。`config/` 的规则不同：只补缺失文件与缺失的顶层键，已有键一律不覆盖，用户文件损坏时跳过（验证步骤见第 6 节第 2 步与第 7 节第 4 步）。
@@ -379,15 +381,26 @@ Write-Host 'nupkg 内所有 OneDragon.exe / Update.exe 签名均为 Valid'
 
    参考值（**只用于排查偏差，不作为断言**）：按本单基线 `c2e3865b` 用 `git ls-tree -r c2e3865b --name-only assets/<tree>` 数出来是 template **1948** / ui **5** / text **8** / game_data **159**。如果某一类的根层数量少于包内数量，说明播种没做完或被中断（回看 `.bundle_seed_status.json` 与 `.log\`）；如果根层多于包内，说明根层有旧版本残留没被整体覆盖（S4 回归），把实际数字记进第 11 节记录表。
 
-5. 记录版本标记内容备用：
+5. 断言版本标记是**纯版本号**（D5：`sq.version` 是 nuspec XML，标记里不能是 XML 全文）：
 
    ```powershell
    cd C:\TestOneDragon
-   Get-Content .\.bundle_seed_version
-   Get-Content .\.bundle_seed_status.json
+   $marker = (Get-Content .\.bundle_seed_version -Raw).Trim()
+   $nuspec = [xml](Get-Content .\current\sq.version -Raw)
+   $nodeVersion = $nuspec.package.metadata.version
+
+   Write-Host "marker      = '$marker'"
+   Write-Host "sq.version  = '$nodeVersion'"
+
+   if ([string]::IsNullOrWhiteSpace($marker)) { Write-Host 'FAIL: .bundle_seed_version 为空'; exit 1 }
+   if ($marker -match '[<>]' -or $marker -match 'nuspec') { Write-Host 'FAIL: .bundle_seed_version 里是 XML 全文，不是纯版本号'; exit 1 }
+   if ($marker -ne $nodeVersion) { Write-Host 'FAIL: .bundle_seed_version 与 current\sq.version 的 <version> 节点不一致'; exit 1 }
+   Write-Host 'PASS: 标记文件是解析后的纯版本号'
    ```
 
-   期望：`.bundle_seed_version` 内容非空且等于 `current\sq.version`；`.bundle_seed_status.json` 的四个键（`template` / `ui` / `text` / `game_data`）值都与它相同。
+   期望：最后打印 `PASS`，退出码 0。`.bundle_seed_status.json` 的四个键（`template` / `ui` / `text` / `game_data`）值都与 `$marker` 相同，同样不含 `<`。
+
+   > 老用户迁移：升级到本版本前，两个文件里存的是 nuspec XML 全文。由于与纯版本号不相等，**第一次启动会全量重新播种一次**，之后两个文件被改写成纯版本号，不会再重复播种。升级后如果发现每次启动都在重播 46MB 资源，说明迁移逻辑回归了，记进第 11 节记录表。
 
 6. 关闭应用：
 
@@ -449,6 +462,83 @@ $lock.Close(); $lock.Dispose()
 
 > 如果 Windows 上目录交换没有被锁影响（Velopack 先替换 `current\` 而根层文件锁不阻止同级目录 rename），这条负向场景可能跑不出来：把实际现象和锁的形态原样记进记录表，不要改代码迁就。
 
+### 5.2 D4：`--version` 递归自启回归（阻断项，真机必测）
+
+> 来源：人类本机验收发现的 D4。修复前冻结后的主程序不处理 `--version`：`get_launcher_version()` 对 `sys.executable` 跑 `[exe, '--version']`，子进程按完整 GUI 启动后又去问自己的版本，进程链每约 4.5 秒延伸一层，永不停止。日志每轮只有 `Overlay 已启用`、`发现 0 个默认组应用` 两行，没有异常堆栈。
+>
+> 修复后：`app.py` 在 `--version` 时打印版本号后立即 `exit 0`（不进入 GUI、不播种），且 velopack 模式下所有版本查询入口都不启动子进程。arm-1 上只能单测（零子进程 + 版本一致），**递归现象本身必须按本节在 Windows 真机确认**。
+
+1. 全新解压 Portable 包并从根层启动（不要进 `current\`）：
+
+   ```powershell
+   $zip = (Get-ChildItem .\deploy\dist\releases -Filter "*win-Portable.zip" | Select-Object -First 1).FullName
+   Remove-Item -Recurse -Force C:\TestOneDragon -ErrorAction SilentlyContinue
+   Expand-Archive -Path $zip -DestinationPath C:\TestOneDragon
+   Start-Process -FilePath C:\TestOneDragon\OneDragon.exe -WorkingDirectory C:\TestOneDragon
+   ```
+
+2. **20 秒后**抓进程与父链（人类给出的复现命令）：
+
+   ```powershell
+   Get-CimInstance Win32_Process -Filter "name='OneDragon.exe'" |
+     Select-Object ProcessId, ParentProcessId, CommandLine | Format-Table -AutoSize
+   ```
+
+   期望：只有一条 `current\OneDragon.exe`，`CommandLine` 里**没有**带 `--version` 参数的进程；不存在「父进程也是 `OneDragon.exe --version`」的链。
+
+3. **60 秒内**再抓一次，确认进程数不增长，只剩一个 `current\OneDragon.exe`：
+
+   ```powershell
+   Start-Sleep -Seconds 40
+   $procs = @(Get-CimInstance Win32_Process -Filter "name='OneDragon.exe'")
+   $procs | Select-Object ProcessId, ParentProcessId, CommandLine | Format-Table -AutoSize
+   if ($procs.Count -ne 1) { Write-Host "FAIL: OneDragon.exe 进程数为 $($procs.Count)，疑似递归自启"; exit 1 }
+   if ($procs[0].CommandLine -match '--version') { Write-Host 'FAIL: 出现了 --version 自启进程'; exit 1 }
+   Write-Host 'PASS: 只剩一个 OneDragon.exe'
+   ```
+
+   期望：打印 `PASS`，退出码 0。
+
+4. 日志不再周期性重复 `Overlay 已启用`：
+
+   ```powershell
+   cd C:\TestOneDragon
+   $before = (Get-ChildItem -Path .\.log\*.log | Select-String -Pattern 'Overlay 已启用' | Measure-Object).Count
+   Start-Sleep -Seconds 30
+   $after = (Get-ChildItem -Path .\.log\*.log | Select-String -Pattern 'Overlay 已启用' | Measure-Object).Count
+   Write-Host "30 秒前 $before 条，现在 $after 条"
+   if ($after -ne $before) { Write-Host 'FAIL: 日志仍在周期性重复 Overlay 已启用（递归自启特征）'; exit 1 }
+   Write-Host 'PASS: 日志不再周期性重复'
+   ```
+
+   期望：两次计数相等（启动阶段允许出现少量，但 30 秒静置期间不能增长）。
+
+5. 直接验证入口本身（窗口不应出现，几秒内退出）：
+
+   ```powershell
+   cd C:\TestOneDragon
+   $elapsed = Measure-Command { $v = & .\current\OneDragon.exe --version; $code = $LASTEXITCODE }
+   Write-Host "stdout='$v' exit=$code elapsed=$([math]::Round($elapsed.TotalSeconds,1))s"
+   if ($code -ne 0) { Write-Host 'FAIL: --version 退出码不为 0'; exit 1 }
+   if ([string]::IsNullOrWhiteSpace($v) -or $v -match '[<>]') { Write-Host 'FAIL: --version 没有打印纯版本号'; exit 1 }
+   if ($elapsed.TotalSeconds -gt 15) { Write-Host 'FAIL: --version 超过 15 秒才返回'; exit 1 }
+   Write-Host 'PASS: --version 立即打印版本并退出'
+   ```
+
+   期望：`stdout` 是纯版本号（如 `0.1.0-beta.1`），退出码 0，15 秒内返回，没有弹 GUI 窗口。
+
+6. 关闭应用并确认无残留：
+
+   ```powershell
+   Get-Process OneDragon -ErrorAction SilentlyContinue | Stop-Process -Force
+   Start-Sleep -Seconds 2
+   @(Get-CimInstance Win32_Process -Filter "name='OneDragon.exe'").Count   # 期望 0
+   ```
+
+**本节通过标准（人类判定口径）**：60 秒内只剩一个 `current\OneDragon.exe`，且日志不再周期性重复 `Overlay 已启用`。任一不满足即 D4 回归，阻断交付。
+
+> 本节的 Windows 真机部分 arm-1 上**未执行**（Linux aarch64 跑不了冻结包）；对应的可执行单测见 `zzz-od-test/test/zzz_od/gui/test_app_version_flag.py`（`--version` 早退、零子进程、版本一致）。
+
 ## 6. 就地升级：用户配置保留、current 被替换（对应验收标准 3）
 
 1. 在根层用户配置里加一条自定义标记：
@@ -495,9 +585,10 @@ $lock.Close(); $lock.Dispose()
    ```powershell
    cd C:\TestOneDragon
    Get-Content .\current\sq.version
+   Select-String -Path .\current\sq.version -Pattern '<version>0\.1\.0-beta\.2</version>'
    ```
 
-   期望：内容为 `0.1.0-beta.2`。
+   期望：`current\sq.version` 是 nuspec XML，其中 `<version>` 节点为 `0.1.0-beta.2`（不是整份文件等于版本号）。升级后重新启动一次应用，再按第 5 节第 5 步断言根层 `.bundle_seed_version` 为纯版本号 `0.1.0-beta.2`。
 
 5. 断言用户配置保留：
 
@@ -627,8 +718,10 @@ $lock.Close(); $lock.Dispose()
 | 4.1 | 签名验证（B1） | `Setup.exe` / `OneDragon.exe` / `Update.exe` 的 `Get-AuthenticodeSignature` 全为 `Valid` | | | |
 | 4.2 | 非发布版本号（S5） | PR 构建为 `0.0.0-pr.<n>.g<sha>`，分支构建为 `0.0.0-dev.g<sha>`，匹配 SemVer2 | | | |
 | 4.3 | nupkg 内 exe 签名（B1-c） | 每个 `*-full.nupkg` 内的 `OneDragon.exe` / `Update.exe` 全部 `Valid` | | | |
-| 5 | 便携版首启播种 | `config` / `assets` / `custom` / `.log` / `.bundle_seed_version` / `.bundle_seed_status.json` 存在；四类资源逐个目录比对「根层 `assets\<tree>` 文件数 == 包内 `current\_internal\resources\assets\<tree>` 文件数」全部为 `一致`；两个版本文件内容一致 | | | |
+| 5 | 便携版首启播种 | `config` / `assets` / `custom` / `.log` / `.bundle_seed_version` / `.bundle_seed_status.json` 存在；四类资源逐个目录比对「根层 `assets\<tree>` 文件数 == 包内 `current\_internal\resources\assets\<tree>` 文件数」全部为 `一致`；两个版本文件内容都是纯版本号，且等于 `current\sq.version` 的 `<version>` 节点 | | | |
 | 5.1 | 残留清理与失败重试（N1/N3） | 残留 `.new-*` / `.old-*` 被清且不误删其他目录；播种失败时应用不崩、出现一次 InfoBar、版本标记不前进、恢复后只重试失败目录 | | | 可选负向验证 |
+| 5.2 | `--version` 递归自启（D4） | 20 秒后进程表只有一条 `current\OneDragon.exe`、无 `--version` 子进程；60 秒内进程数不增长；日志不再周期性重复 `Overlay 已启用`；`current\OneDragon.exe --version` 15 秒内打印纯版本号并退出码 0 | | | Windows 真机必测 |
+| 5.3 | 播种版本标记为纯版本号（D5） | `.bundle_seed_version` / `.bundle_seed_status.json` 不含 `<`，等于 `current\sq.version` 的 `<version>` 节点；老用户升级后只全量重播一次 | | | |
 | 6 | 就地升级 | `current\sq.version` 为 `0.1.0-beta.2`，`config\project.yml` 的 `test_custom_marker` 保留 | | | |
 | 7 | 日志检索 | 「不是有效的 Git 仓库」计数 0，「尝试下一个代码源」计数 0 | | | |
 | 7.1 | S4 覆盖与合并 | 只读资源残留被清、手工改动被盖回；`doc_link` 被补齐、`test_custom_marker` 保留；`.bundle_seed_status.json` 四项都为 `0.1.0-beta.2` | | | |
