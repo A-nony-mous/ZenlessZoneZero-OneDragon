@@ -34,10 +34,6 @@ class CodeInstallCard(BaseInstallCard):
             left_widgets=[self.git_branch_opt]
         )
 
-        if os_utils.is_velopack_mode():
-            self.install_btn.setEnabled(False)
-            self.git_branch_opt.setVisible(False)
-
         self.updated: bool = False  # 是否已经更新了
 
     @property

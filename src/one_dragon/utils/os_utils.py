@@ -110,6 +110,8 @@ def set_work_dir(work_dir: str | Path | None) -> None:
     """
     global _work_dir
     _work_dir = None if work_dir is None else Path(work_dir).resolve()
+    if 'one_dragon.envs.env_config' in sys.modules:
+        sys.modules['one_dragon.envs.env_config'].refresh_default_env_paths()
 
 
 def get_work_dir() -> str:

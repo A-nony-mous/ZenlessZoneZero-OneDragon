@@ -64,7 +64,6 @@ class MainAppWindowBase(AppWindowBase):
     ):
         self.ctx: OneDragonContext = ctx
         self.app_setting_manager = AppSettingManager(ctx)
-        self.ctx.update_service.restore_interrupted_launcher_update()
         self.download_queue = DownloadQueueService(ctx)
         self._connected_pivot_navi: PivotNavigatorInterface | None = None
 

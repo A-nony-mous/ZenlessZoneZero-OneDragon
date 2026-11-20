@@ -1,5 +1,4 @@
 from collections.abc import Callable
-from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QTableWidgetItem, QWidget
@@ -26,7 +25,6 @@ from one_dragon.base.web.zip_downloader import ZipDownloader
 from one_dragon.envs.env_config import ProxyTypeEnum
 from one_dragon.envs.git_service import GitLog, GitSyncStatus
 from one_dragon.envs.repo_config import ModelResourceDefinition
-from one_dragon.envs.update_service import LauncherType
 from one_dragon.utils import os_utils
 from one_dragon.utils.app_utils import start_one_dragon
 from one_dragon.utils.i18_utils import gt
@@ -36,9 +34,6 @@ from one_dragon_qt.services.download_queue_service import (
     ResourceDownloadSpec,
 )
 from one_dragon_qt.widgets.column import Column
-from one_dragon_qt.widgets.download_card.launcher_download_card import (
-    LauncherDownloadCard,
-)
 from one_dragon_qt.widgets.download_card.onnx_model_download_card import (
     OnnxModelDownloadCard,
 )
@@ -134,29 +129,34 @@ class ResourceManagementInterface(VerticalScrollInterface):
         )
         content_widget.v_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        self.code_card = CodeInstallCard(self.ctx)
-        self.code_card.titleLabel.setText(gt('代码同步'))
-        self.code_card.iconLabel.setIcon(FluentIcon.CODE)
-        self.code_card.git_branch_opt.hide()
-        self.code_card.finished.connect(self.on_code_updated)
-        self.code_card.finished.connect(self._show_dialog_after_code_updated)
-        self.code_card.install_btn.clicked.disconnect()
-        self.code_card.install_btn.clicked.connect(self._start_code_sync)
+        if not os_utils.is_velopack_mode():
+            self.code_card = CodeInstallCard(self.ctx)
+            self.code_card.titleLabel.setText(gt('代码同步'))
+            self.code_card.iconLabel.setIcon(FluentIcon.CODE)
+            self.code_card.git_branch_opt.hide()
+            self.code_card.finished.connect(self.on_code_updated)
+            self.code_card.finished.connect(self._show_dialog_after_code_updated)
+            self.code_card.install_btn.clicked.disconnect()
+            self.code_card.install_btn.clicked.connect(self._start_code_sync)
 
-        self.history_button = PushButton(FluentIcon.HISTORY, gt('版本记录'))
-        self.history_button.clicked.connect(self._show_history_dialog)
-        self.settings_button = PushButton(FluentIcon.SETTING, gt('设置'))
-        self.settings_button.clicked.connect(self._show_code_settings_dialog)
-        self.code_card.btn_layout.insertWidget(
-            1,
-            self.history_button,
-            alignment=Qt.AlignmentFlag.AlignRight,
-        )
-        self.code_card.btn_layout.insertWidget(
-            2,
-            self.settings_button,
-            alignment=Qt.AlignmentFlag.AlignRight,
-        )
+            self.history_button = PushButton(FluentIcon.HISTORY, gt('版本记录'))
+            self.history_button.clicked.connect(self._show_history_dialog)
+            self.settings_button = PushButton(FluentIcon.SETTING, gt('设置'))
+            self.settings_button.clicked.connect(self._show_code_settings_dialog)
+            self.code_card.btn_layout.insertWidget(
+                1,
+                self.history_button,
+                alignment=Qt.AlignmentFlag.AlignRight,
+            )
+            self.code_card.btn_layout.insertWidget(
+                2,
+                self.settings_button,
+                alignment=Qt.AlignmentFlag.AlignRight,
+            )
+        else:
+            self.code_card = None
+            self.history_button = None
+            self.settings_button = None
         self.repository_url_opt = ComboBoxSettingCard(
             icon=FluentIcon.APPLICATION,
             title='代码源',
@@ -318,19 +318,8 @@ class ResourceManagementInterface(VerticalScrollInterface):
         content_widget.add_widget(self.download_settings_group)
 
         self.download_items_group = SettingCardGroup('更新与下载')
-        self.download_items_group.addSettingCard(self.code_card)
-        self.launcher_opt = LauncherDownloadCard(self.ctx)
-        self.launcher_opt.use_download_queue(
-            self.download_queue,
-            self._build_launcher_spec,
-        )
-        self.download_items_group.addSettingCard(self.launcher_opt)
-
-        if os_utils.is_velopack_mode():
-            self.code_card.hide()
-            self.history_button.hide()
-            self.settings_button.hide()
-            self.launcher_opt.hide()
+        if self.code_card is not None:
+            self.download_items_group.addSettingCard(self.code_card)
 
         self.ocr_opt = self._create_model_card(
             title='OCR识别',
@@ -495,47 +484,6 @@ class ResourceManagementInterface(VerticalScrollInterface):
             ),
         )
 
-    def _build_launcher_spec(self) -> ResourceDownloadSpec:
-        """根据启动器卡片当前通道构造队列任务。"""
-        launcher_type = self.launcher_opt._launcher_type
-        target_version = self.launcher_opt.target_version
-        current_version = self.launcher_opt.current_version or ''
-        param = self.ctx.update_service.get_launcher_download_param(
-            launcher_type,
-            target_version,
-            staging=True,
-        )
-        staging_dir = self.ctx.update_service.get_launcher_staging_dir(
-            launcher_type,
-            target_version,
-        )
-        return ResourceDownloadSpec(
-            resource_id=f'launcher_{launcher_type}',
-            resource_type='launcher',
-            title='启动器',
-            current_version=current_version,
-            target_version=target_version,
-            downloader_factory=lambda selected=param: ZipDownloader(selected),
-            after_download=lambda success: self._after_launcher_download(
-                launcher_type,
-                staging_dir,
-                success,
-            ),
-        )
-
-    def _after_launcher_download(
-        self,
-        launcher_type: LauncherType,
-        staging_dir: Path,
-        success: bool,
-    ) -> None:
-        """下载完成后执行启动器事务替换。"""
-        if success:
-            self.ctx.update_service.apply_staged_launcher_update(
-                launcher_type,
-                staging_dir,
-            )
-
     def _switch_existing_model(
         self,
         config_key: str,
@@ -622,10 +570,11 @@ class ResourceManagementInterface(VerticalScrollInterface):
         VerticalScrollInterface.on_interface_shown(self)
         if not os_utils.is_velopack_mode():
             self._refresh_code_settings()
-            self.code_card.git_branch_opt.init_with_value(
-                self.ctx.env_config.git_branch
-            )
-            self.code_card.check_and_update_display()
+            if self.code_card is not None:
+                self.code_card.git_branch_opt.init_with_value(
+                    self.ctx.env_config.git_branch
+                )
+                self.code_card.check_and_update_display()
         self.resource_source_opt.init_with_adapter(
             self.ctx.env_config.get_prop_adapter('resource_source')
         )
@@ -672,14 +621,16 @@ class ResourceManagementInterface(VerticalScrollInterface):
 
     def _start_code_sync(self) -> None:
         """从摘要卡片开始代码同步。"""
-        self._update_code_header(gt('同步中'))
-        self.code_card.start_progress()
+        if self.code_card is not None:
+            self._update_code_header(gt('同步中'))
+            self.code_card.start_progress()
 
     def _update_code_header(self, status: str) -> None:
         """刷新摘要卡片中的分支和同步状态。"""
-        self.code_card.setContent(
-            f'{gt("当前分支")} {self.ctx.env_config.git_branch} · {status}'
-        )
+        if self.code_card is not None:
+            self.code_card.setContent(
+                f'{gt("当前分支")} {self.ctx.env_config.git_branch} · {status}'
+            )
 
     def _update_developer_visibility(self) -> None:
         """按开发者模式显示代码高级选项。"""
@@ -789,8 +740,9 @@ class ResourceManagementInterface(VerticalScrollInterface):
         commit_id = btn.property('commit')
         success, msg = self.ctx.git_service.reset_to_commit(commit_id)
         if success:
-            self.code_card.updated = True
-            self.code_card.check_and_update_display()
+            if self.code_card is not None:
+                self.code_card.updated = True
+                self.code_card.check_and_update_display()
             self.page_num = -1
             self.start_fetch_total()
         elif msg:
@@ -803,9 +755,11 @@ class ResourceManagementInterface(VerticalScrollInterface):
         """切换标准代码分支并刷新同步状态。"""
         branch = str(value)
         self.ctx.env_config.git_branch = branch
-        self.code_card.git_branch_opt.init_with_value(branch)
+        if self.code_card is not None:
+            self.code_card.git_branch_opt.init_with_value(branch)
         self.custom_git_branch_lineedit.setText(branch)
-        self.code_card.check_and_update_display()
+        if self.code_card is not None:
+            self.code_card.check_and_update_display()
 
     def _on_custom_branch_edited(self) -> None:
         text = self.custom_git_branch_lineedit.text()
@@ -813,11 +767,16 @@ class ResourceManagementInterface(VerticalScrollInterface):
         if fallback is None:
             fallback = self.ctx.repo_config.primary_branch
         self.ctx.env_config.git_branch = text if text else str(fallback)
-        self.code_card.check_and_update_display()
+        if self.code_card is not None:
+            self.code_card.check_and_update_display()
 
     def _show_dialog_after_code_updated(self, success: bool) -> None:
         """仅在代码实际更新后显示重启对话框。"""
-        if not success or self.code_card.last_sync_status is not GitSyncStatus.SUCCESS:
+        if (
+            not success
+            or self.code_card is None
+            or self.code_card.last_sync_status is not GitSyncStatus.SUCCESS
+        ):
             return
         dialog = Dialog(gt('更新完成'), gt('代码已更新，重启以应用更改'), self)
         dialog.setTitleBarVisible(False)

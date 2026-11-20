@@ -426,6 +426,22 @@ def main() -> None:
     app = QApplication(sys.argv)
     app.setAttribute(Qt.ApplicationAttribute.AA_DontCreateNativeWidgetSiblings)
 
+    # 弹窗时机：播种之后、主窗口创建之前（第 7.7.1 节）
+    try:
+        from one_dragon.utils import legacy_migration
+
+        work_dir_path = Path(os_utils.get_work_dir())
+        if legacy_migration.should_show_first_launch_migration_dialog(
+            work_dir_path
+        ):
+            from one_dragon_qt.dialogs.legacy_migration_dialog import (
+                show_first_launch_migration_dialog,
+            )
+
+            show_first_launch_migration_dialog(work_dir_path)
+    except Exception:
+        log.error("首启旧数据迁移向导执行异常", exc_info=True)
+
     _ctx = ZContext()
 
     # 设置主题

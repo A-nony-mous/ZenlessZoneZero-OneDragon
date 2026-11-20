@@ -4,7 +4,6 @@ import contextlib
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal
@@ -14,8 +13,6 @@ from one_dragon.base.operation.context_download_request_event import (
     ContextDownloadRequestEvent,
 )
 from one_dragon.base.web.zip_downloader import ZipDownloader
-from one_dragon.envs.update_service import LauncherType
-from one_dragon.utils import os_utils
 from one_dragon.utils.i18_utils import gt
 from one_dragon.utils.log_utils import log
 from one_dragon_qt.services.download_queue_service import (
@@ -96,14 +93,6 @@ class ResourceUpdateCoordinator(QObject):
         self._check_interval: float = 300
         self._checks_started: bool = False
 
-        if not os_utils.is_velopack_mode():
-            self._register_check(
-                _ResourceCheck(
-                    check_id='launcher',
-                    check_update=self.ctx.update_service.is_launcher_update_available,
-                    build_specs=self._build_launcher_specs,
-                )
-            )
         self._register_check(
             _ResourceCheck(
                 check_id='project_models',
@@ -384,40 +373,6 @@ class ResourceUpdateCoordinator(QObject):
         self._ocr_waiting = False
         request.respond(confirmed=confirmed, remember=remember)
 
-    def _build_launcher_specs(self) -> list[ResourceDownloadSpec]:
-        """构造当前已安装启动器的更新下载项。"""
-        update_service = self.ctx.update_service
-        launcher_type = update_service.detect_running_launcher_type() or 'launcher'
-        current, stable, beta = update_service.get_launcher_version_info(launcher_type)
-        target = update_service.get_launcher_target_version(current, stable, beta)
-        if not target or current == target:
-            return []
-        launcher_param = update_service.get_launcher_download_param(
-            launcher_type,
-            target,
-            staging=True,
-        )
-        staging_dir = update_service.get_launcher_staging_dir(
-            launcher_type,
-            target,
-        )
-        return [
-            ResourceDownloadSpec(
-                resource_id=f'launcher_{launcher_type}',
-                resource_type='launcher',
-                title='启动器',
-                current_version=current,
-                target_version=target,
-                note='启动器更新',
-                downloader_factory=lambda: ZipDownloader(launcher_param),
-                after_download=lambda success: self._after_launcher_download(
-                    launcher_type,
-                    staging_dir,
-                    success,
-                ),
-            )
-        ]
-
     def _build_model_specs(self) -> list[ResourceDownloadSpec]:
         """按项目模型配置声明构造全部缺失或更新任务。"""
         specs: list[ResourceDownloadSpec] = []
@@ -466,16 +421,3 @@ class ResourceUpdateCoordinator(QObject):
         """模型下载成功后再切换当前配置。"""
         if success:
             self.ctx.model_config.update(config_key, target)
-
-    def _after_launcher_download(
-        self,
-        launcher_type: LauncherType,
-        staging_dir: Path,
-        success: bool,
-    ) -> None:
-        """下载成功后事务替换启动器，失败时保留当前版本。"""
-        if success:
-            self.ctx.update_service.apply_staged_launcher_update(
-                launcher_type,
-                staging_dir,
-            )

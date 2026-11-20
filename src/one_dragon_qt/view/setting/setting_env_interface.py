@@ -19,6 +19,9 @@ from one_dragon_qt.widgets.setting_card.combo_box_setting_card import (
 )
 from one_dragon_qt.widgets.setting_card.help_card import HelpCard
 from one_dragon_qt.widgets.setting_card.key_setting_card import KeySettingCard
+from one_dragon_qt.widgets.setting_card.legacy_migration_card import (
+    LegacyMigrationCard,
+)
 from one_dragon_qt.widgets.setting_card.switch_setting_card import SwitchSettingCard
 from one_dragon_qt.widgets.setting_card.text_setting_card import TextSettingCard
 from one_dragon_qt.widgets.vertical_scroll_interface import VerticalScrollInterface
@@ -48,6 +51,7 @@ class SettingEnvInterface(VerticalScrollInterface):
         )
         content_layout.addWidget(self.help_opt)
         content_layout.addWidget(self._init_basic_group())
+        content_layout.addWidget(self._init_data_group())
         content_layout.addWidget(self._init_python_group())
         content_layout.addWidget(self._init_web_group())
         content_layout.addWidget(self._init_key_group())
@@ -85,6 +89,12 @@ class SettingEnvInterface(VerticalScrollInterface):
         basic_group.addSettingCard(self.copy_screenshot_opt)
 
         return basic_group
+
+    def _init_data_group(self) -> SettingCardGroup:
+        data_group = SettingCardGroup(gt('数据管理'))
+        self.migration_card = LegacyMigrationCard(self)
+        data_group.addSettingCard(self.migration_card)
+        return data_group
 
     def _init_python_group(self) -> SettingCardGroup:
         python_group = SettingCardGroup(gt('Python相关'))
@@ -171,6 +181,8 @@ class SettingEnvInterface(VerticalScrollInterface):
         :return:
         """
         VerticalScrollInterface.on_interface_shown(self)
+        if hasattr(self, 'migration_card'):
+            self.migration_card.refresh_display()
 
         self.screenshot_method_opt.init_with_adapter(self.ctx.env_config.get_prop_adapter('screenshot_method'))
         self.debug_opt.init_with_adapter(self.ctx.env_config.get_prop_adapter('is_debug'))
