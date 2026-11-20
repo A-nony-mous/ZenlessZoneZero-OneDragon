@@ -53,7 +53,6 @@ jobs:
           .\.venv\Scripts\Activate.ps1
           uv run python src/one_dragon/devtools/compile_po.py
           uv run python src/zzz_od/auto_battle/build_utils.py
-          uv run python deploy/generate_module_manifest.py
         env:
           PYTHONPATH: src
 
@@ -61,8 +60,8 @@ jobs:
         id: changes
         shell: pwsh
         run: |
-          $trackedChanges = @(git diff --name-only --ignore-cr-at-eol -- config/auto_battle/ assets/text/output/ deploy/module_manifest.py)
-          $untrackedChanges = @(git ls-files --others --exclude-standard -- config/auto_battle/ assets/text/output/ deploy/module_manifest.py)
+          $trackedChanges = @(git diff --name-only --ignore-cr-at-eol -- config/auto_battle/ assets/text/output/)
+          $untrackedChanges = @(git ls-files --others --exclude-standard -- config/auto_battle/ assets/text/output/)
           $changes = @($trackedChanges + $untrackedChanges) | Where-Object { $_ }
           Add-Content -Path $env:GITHUB_OUTPUT -Value "changed=$(([bool]$changes).ToString().ToLowerInvariant())"
           Add-Content -Path $env:GITHUB_OUTPUT -Value "files<<EOF"
@@ -92,7 +91,6 @@ jobs:
             Write-Host "::error::构建产物未提交，请在本地运行以下命令后提交："
             Write-Host "::error::  uv run python src/one_dragon/devtools/compile_po.py"
             Write-Host "::error::  uv run python src/zzz_od/auto_battle/build_utils.py"
-            Write-Host "::error::  uv run python deploy/generate_module_manifest.py"
             Write-Host "变更文件："
             Write-Host $env:CHANGED_FILES
             exit 1

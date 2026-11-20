@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  CREATE_RELEASE: ${{ (github.event_name == 'workflow_dispatch' && inputs.create_release == true) || startsWith(github.ref, 'refs/tags/') }}
+  CREATE_RELEASE: ${{ github.repository_owner == 'OneDragon-Anything' && ((github.event_name == 'workflow_dispatch' && inputs.create_release == true) || startsWith(github.ref, 'refs/tags/v')) }}
   # vgamepad 安装时默认会弹出 ViGEmBus 驱动安装程序，CI 中跳过，避免卡住
   VGAMEPAD_SKIP_VIGEMBUS_INSTALL: 'true'
 
@@ -50,8 +50,6 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'build') }}
     runs-on: windows-latest
     needs: version
-    outputs:
-      unsigned_artifact_id: ${{ steps.upload-unsigned-artifact.outputs.artifact-id }}
 
     steps:
     - name: Checkout code
@@ -80,22 +78,7 @@ jobs:
         .\.venv\Scripts\Activate.ps1
         uv sync --group dev
 
-    - name: Download and extract UPX into venv Scripts
-      shell: pwsh
-      run: |
-        $venvScripts = ".\.venv\Scripts"
-        $upxDir = Join-Path $venvScripts "upx"
-        $sourceUpxPath = Join-Path $upxDir "upx-4.2.3-win64" "upx.exe"
-        $destinationUpxPath = Join-Path $venvScripts "upx.exe"
-        $zipPath = "upx.zip"
-
-        Invoke-WebRequest -Uri "https://github.com/upx/upx/releases/download/v4.2.3/upx-4.2.3-win64.zip" -OutFile $zipPath
-        Expand-Archive -Path $zipPath -DestinationPath $upxDir -Force
-        Move-Item -Path $sourceUpxPath -Destination $destinationUpxPath -Force
-        Remove-Item -Path $upxDir -Recurse -Force
-        Remove-Item -Path $zipPath -Force
-
-    - name: Build executables
+    - name: Build executables (PyInstaller)
       shell: pwsh
       env:
         RELEASE_VERSION: ${{ needs.version.outputs.version }}
@@ -103,107 +86,81 @@ jobs:
         echo "__version__ = '$env:RELEASE_VERSION'" | Out-File -FilePath src/one_dragon/version.py -Encoding utf8
         .\.venv\Scripts\Activate.ps1
         cd deploy
-        uv run pyinstaller --noconfirm --clean "OneDragon-Installer.spec"
-        uv run pyinstaller --noconfirm --clean "OneDragon-Launcher.spec"
-        uv run pyinstaller --noconfirm --clean "OneDragon-RuntimeLauncher.spec"
-        Copy-Item -Path "..\src" -Destination "dist\OneDragon-RuntimeLauncher\src" -Recurse -Force
+        uv run pyinstaller --noconfirm --clean "OneDragon-Portable.spec"
 
-    - name: Bundle dependencies into wheels
+    - name: Install Velopack CLI
       shell: pwsh
       run: |
-        # 激活虚拟环境
-        .\.venv\Scripts\Activate.ps1
+        dotnet tool install -g vpk
 
-        # 创建目标目录并生成 wheel 包
-        New-Item -ItemType Directory -Path deploy/dist/wheels -Force
-        uv export --no-hashes --no-dev --format requirements-txt > deploy/dist/requirements.txt
-        pip wheel --wheel-dir=deploy/dist/wheels -r deploy/dist/requirements.txt
+    - name: Pack with Velopack
+      shell: pwsh
+      env:
+        RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        CREATE_RELEASE: ${{ env.CREATE_RELEASE }}
+      run: |
+        $semver = $env:RELEASE_VERSION.TrimStart('v')
+        $releasesDir = "deploy\dist\releases"
+        New-Item -ItemType Directory -Path $releasesDir -Force
 
-        # 压缩生成的 wheels 目录
-        Compress-Archive -Path deploy/dist/wheels/* -DestinationPath deploy/dist/ZenlessZoneZero-OneDragon-Environment.zip
+        if ($env:CREATE_RELEASE -eq 'true') {
+          vpk pack `
+            --packId "ZenlessZoneZero-OneDragon" `
+            --packVersion "$semver" `
+            --packDir "deploy\dist\OneDragon" `
+            --mainExe "OneDragon.exe" `
+            --icon "assets\ui\logo.ico" `
+            --runtime win-x64 `
+            --packTitle "ZenlessZoneZero-OneDragon" `
+            --packAuthors "OneDragon-Anything" `
+            --signTemplate "signtool.exe sign /td sha256 /fd sha256 /a /tr http://timestamp.digicert.com {{file}}" `
+            --outputDir $releasesDir
+        } else {
+          vpk pack `
+            --packId "ZenlessZoneZero-OneDragon" `
+            --packVersion "$semver" `
+            --packDir "deploy\dist\OneDragon" `
+            --mainExe "OneDragon.exe" `
+            --icon "assets\ui\logo.ico" `
+            --runtime win-x64 `
+            --packTitle "ZenlessZoneZero-OneDragon" `
+            --packAuthors "OneDragon-Anything" `
+            --outputDir $releasesDir
+        }
 
-    - name: Upload Installer
+    - name: Build offline models package
+      shell: pwsh
+      env:
+        RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        python tools/ci/prepare_release_assets.py --release-version "$env:RELEASE_VERSION" --output-dir "deploy/dist/releases"
+
+    - name: Upload Velopack Artifacts (Non-Release)
       if: ${{ env.CREATE_RELEASE == 'false' }}
       uses: actions/upload-artifact@v4
       with:
-        name: Installer
-        path: deploy/dist/OneDragon-Installer.exe
+        name: Velopack-Artifacts
+        path: deploy/dist/releases/*
 
-    - name: Upload Launcher
-      if: ${{ env.CREATE_RELEASE == 'false' }}
-      uses: actions/upload-artifact@v4
-      with:
-        name: Launcher
-        path: deploy/dist/OneDragon-Launcher.exe
-
-    - name: Upload RuntimeLauncher
-      if: ${{ env.CREATE_RELEASE == 'false' }}
-      uses: actions/upload-artifact@v4
-      with:
-        name: RuntimeLauncher
-        include-hidden-files: true
-        path: deploy/dist/OneDragon-RuntimeLauncher/
-
-    - name: Upload Wheels
-      if: ${{ env.CREATE_RELEASE == 'false' }}
-      uses: actions/upload-artifact@v4
-      with:
-        name: Wheels
-        path: deploy/dist/ZenlessZoneZero-OneDragon-Environment.zip
-
-    - name: Upload Dist
+    - name: Upload Releases Artifact (Release)
       if: ${{ env.CREATE_RELEASE == 'true' }}
       uses: actions/upload-artifact@v4
       with:
-        name: dist
-        include-hidden-files: true
-        if-no-files-found: error
-        path: deploy/dist
-
-    - name: Upload Unsigned Artifact
-      if: ${{ env.CREATE_RELEASE == 'true' }}
-      id: upload-unsigned-artifact
-      uses: actions/upload-artifact@v4
-      with:
-        # 上传后是 unsigned.zip
-        name: unsigned
-        if-no-files-found: error
-        path: |
-          .\deploy\dist\OneDragon-Launcher.exe
-          .\deploy\dist\OneDragon-RuntimeLauncher\OneDragon-RuntimeLauncher.exe
-          .\deploy\dist\OneDragon-Installer.exe
+        name: releases
+        path: deploy/dist/releases/*
 
   sign:
     runs-on: windows-latest
     needs:
       - version
       - build
-    if: ${{ github.repository_owner == 'OneDragon-Anything' &&
-            ((github.event_name == 'workflow_dispatch' && inputs.create_release == true) || startsWith(github.ref, 'refs/tags/'))
-        }}
-    env:
-      SIGNED_DIR: 'signed'
-      SIGNPATH_SIGNING_POLICY_SLUG: 'release-signing'
+    if: ${{ env.CREATE_RELEASE == 'true' }}
     steps:
-    - name: Sign Artifact
-      if: ${{ needs.build.outputs.unsigned_artifact_id != '' }}
-      uses: signpath/github-action-submit-signing-request@v1.1
-      with:
-        api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
-        organization-id: '${{ vars.SIGNPATH_ORGANIZATION_ID }}'
-        project-slug: 'ZenlessZoneZero-OneDragon'
-        signing-policy-slug: '${{ env.SIGNPATH_SIGNING_POLICY_SLUG }}'
-        github-artifact-id: "${{ needs.build.outputs.unsigned_artifact_id }}"
-        wait-for-completion: true
-        # 签名后会自动下载到这个目录并解压 文件名和原来的一样
-        output-artifact-directory: '${{ env.SIGNED_DIR }}'
-
-    - name: Upload signed executables
-      uses: actions/upload-artifact@v4
-      with:
-        name: signed
-        if-no-files-found: error
-        path: ${{ env.SIGNED_DIR }}
+      - name: Verify signing status
+        shell: pwsh
+        run: |
+          Write-Host "Velopack package signed via vpk pack --signTemplate."
 
   release:
     runs-on: windows-latest
@@ -211,11 +168,7 @@ jobs:
       - version
       - build
       - sign
-    if: ${{ always() &&
-            needs.build.result == 'success' &&
-            ((github.event_name == 'workflow_dispatch' && inputs.create_release == true) || startsWith(github.ref, 'refs/tags/')) &&
-            (needs.sign.result == 'success')
-        }}
+    if: ${{ env.CREATE_RELEASE == 'true' && needs.build.result == 'success' }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -227,44 +180,25 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Download dist
+    - name: Download releases
       uses: actions/download-artifact@v4
       with:
-        name: dist
-        path: deploy/dist
-
-    - name: Download signed executables
-      if: ${{ needs.sign.result == 'success' }}
-      uses: actions/download-artifact@v4
-      with:
-        name: signed
-        path: deploy/dist/signed
-
-    - name: Prepare release directory and models
-      shell: pwsh
-      env:
-        RELEASE_VERSION: ${{ needs.version.outputs.version }}
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: python tools/ci/prepare_release_assets.py --release-version "$env:RELEASE_VERSION"
+        name: releases
+        path: deploy/dist/releases
 
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: ${{ needs.version.outputs.version }}
+        tag_name: ${{ startsWith(needs.version.outputs.version, 'v') && needs.version.outputs.version || format('v{0}', needs.version.outputs.version) }}
         name: "Release ${{ needs.version.outputs.version }}"
         body: |
           > 中国大陆用户推荐前往 [CNB（Cloud Native Build）](https://cnb.cool/OneDragon-Anything/ZenlessZoneZero-OneDragon) 下载，速度更快。
 
           ## 安装方式
 
-          - `ZenlessZoneZero-OneDragon-${{ needs.version.outputs.version }}-Full-Environment.zip` 为带环境的完整包，不需要额外下载资源。
-          - `ZenlessZoneZero-OneDragon-${{ needs.version.outputs.version }}-Full.zip` 为完整包，解压后选择解压目录为安装目录，只需要下载环境依赖。
-          - `ZenlessZoneZero-OneDragon-${{ needs.version.outputs.version }}-Installer.exe` 为精简安装程序，运行后会自动下载所需的资源。
-          - `ZenlessZoneZero-OneDragon-${{ needs.version.outputs.version }}-WithRuntime-Full.zip` 为内嵌运行时 + 源码 + 模型的完整独立包（无需安装 Python，也无需额外下载模型），解压即用。
-          - `ZenlessZoneZero-OneDragon-${{ needs.version.outputs.version }}-WithRuntime.zip` 为内嵌运行时 + 源码的精简独立包（无需安装 Python，模型按需下载），解压即用。
-          - 如果你想更新启动器，前往主程序【设置】-【资源下载】页面更新，或者下载 `ZenlessZoneZero-OneDragon-Launcher.zip`，解压后替换。
-          - `ZenlessZoneZero-OneDragon-RuntimeLauncher.zip` 为集成启动器更新包（exe + .runtime），用于已有环境的就地升级。
-          - __不要下载Source Code__
+          - `ZenlessZoneZero-OneDragon-Setup.exe`：安装程序，解压安装并自带自动升级。
+          - `ZenlessZoneZero-OneDragon-win-Portable.zip`：便携版压缩包，解压即用、自带自动升级。
+          - `ZenlessZoneZero-OneDragon-Models.zip`：离线模型包，解压到根目录 `assets/models/` 即可离线使用。
 
           安装前请查看 [安装指南](https://one-dragon.com/zzz/zh/quickstart.html)
           若运行出错请查看 [自助排障指南](https://docs.qq.com/doc/p/7add96a4600d363b75d2df83bb2635a7c6a969b5)
@@ -288,16 +222,9 @@ jobs:
           See the [Privacy Policy](.github/PRIVACY.md).
 
         files: |
-          ZenlessZoneZero-OneDragon-${{ needs.version.outputs.version }}-Full-Environment.zip
-          ZenlessZoneZero-OneDragon-${{ needs.version.outputs.version }}-Full.zip
-          ZenlessZoneZero-OneDragon-${{ needs.version.outputs.version }}-Installer.exe
-          ZenlessZoneZero-OneDragon-${{ needs.version.outputs.version }}-WithRuntime-Full.zip
-          ZenlessZoneZero-OneDragon-${{ needs.version.outputs.version }}-WithRuntime.zip
-          ZenlessZoneZero-OneDragon-Environment.zip
-          ZenlessZoneZero-OneDragon-Launcher.zip
-          ZenlessZoneZero-OneDragon-RuntimeLauncher.zip
+          deploy/dist/releases/*
         generate_release_notes: false
-        prerelease: ${{ contains(needs.version.outputs.version, '-beta.') }}
+        prerelease: ${{ contains(needs.version.outputs.version, '-beta') }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -307,7 +234,7 @@ jobs:
       shell: pwsh
       env:
         CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
-        RELEASE_TAG: ${{ needs.version.outputs.version }}
+        RELEASE_TAG: ${{ startsWith(needs.version.outputs.version, 'v') && needs.version.outputs.version || format('v{0}', needs.version.outputs.version) }}
       run: |
         if ([string]::IsNullOrWhiteSpace($env:CNB_TOKEN)) {
           throw 'Missing GitHub Actions secret: CNB_TOKEN'

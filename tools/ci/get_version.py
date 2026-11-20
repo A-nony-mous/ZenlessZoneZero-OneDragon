@@ -59,16 +59,22 @@ def main() -> int:
         else:
             version = f"dev+{short_hash}"
 
-    print(f"Version: {version}")
+    tag_name = version if version.startswith('v') else f"v{version}"
+    semver_version = version.removeprefix('v')
+
+    print(f"Version: {semver_version}")
 
     if github_output:
         with open(github_output, 'a') as f:
-            f.write(f"version={version}\n")
+            f.write(f"version={semver_version}\n")
 
     if should_push_tag:
-        print(f"Creating and pushing new tag: {version}")
-        subprocess.run(['git', '-c', 'user.name=GitHub Actions', '-c', 'user.email=actions@github.com', 'tag', version], check=True)
-        subprocess.run(['git', 'push', 'origin', version], check=True)
+        print(f"Creating and pushing new tag: {tag_name}")
+        subprocess.run(
+            ['git', '-c', 'user.name=GitHub Actions', '-c', 'user.email=actions@github.com', 'tag', tag_name],
+            check=True,
+        )
+        subprocess.run(['git', 'push', 'origin', tag_name], check=True)
 
     return 0
 
