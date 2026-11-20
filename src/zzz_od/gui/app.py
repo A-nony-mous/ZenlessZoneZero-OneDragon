@@ -12,7 +12,9 @@ try:
 
     from one_dragon.base.operation.one_dragon_context import ContextInstanceEventEnum
     from one_dragon.utils import app_utils, os_utils
+    from one_dragon.utils.bundle_seed import ensure_work_dir_ready
     from one_dragon.utils.i18_utils import gt
+    from one_dragon.utils.updater import init_velopack
     from one_dragon_qt.overlay.overlay_manager import OverlayManager
     from one_dragon_qt.services.styles_manager import OdQtStyleSheet
     from one_dragon_qt.view.context_event_signal import ContextEventSignal
@@ -47,10 +49,15 @@ try:
 
         def run(self):
             launcher_version = app_utils.get_launcher_version()
-            code_version = self.ctx.git_service.get_current_version()
+            if launcher_version and not launcher_version.startswith('v'):
+                launcher_version = f'v{launcher_version}'
 
-            # 区分启动器类型：集成启动器（exe 打包运行）与源码启动器
-            launch_tag = '集成' if os_utils.run_in_exe() else '源码'
+            if os_utils.is_velopack_mode():
+                code_version = "velopack"
+                launch_tag = "发行版"
+            else:
+                code_version = self.ctx.git_service.get_current_version()
+                launch_tag = '集成' if os_utils.run_in_exe() else '源码'
 
             versions = (launcher_version, code_version, launch_tag)
             self.get.emit(versions)
@@ -293,6 +300,9 @@ except Exception:
 
 # 初始化应用程序，并启动主窗口
 def main() -> None:
+    init_velopack()
+    ensure_work_dir_ready()
+
     if _init_error is not None:
         # 显示错误弹窗，询问用户是否打开排障文档
         error_message = f"启动一条龙失败,报错信息如下:\n{stack_trace}\n\n是否打开排障文档查看解决方案?"

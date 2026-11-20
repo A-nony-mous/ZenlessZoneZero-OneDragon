@@ -69,6 +69,35 @@ def run_in_exe() -> bool:
     return getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
 
 
+@lru_cache(maxsize=1)
+def get_velopack_root() -> Path | None:
+    """获取 Velopack 根目录。
+
+    sys.executable 的父目录名为 current 且其上级有 Update.exe 或 .portable 时返回该上级；否则 None。
+    """
+    try:
+        exe_path = Path(sys.executable).resolve()
+        parent = exe_path.parent
+        if parent.name.lower() == 'current':
+            root = parent.parent
+            if (root / 'Update.exe').exists() or (root / '.portable').exists():
+                return root
+    except Exception:
+        pass
+    return None
+
+
+def is_velopack_mode() -> bool:
+    """当前是否在 Velopack 模式下运行。"""
+    return get_velopack_root() is not None
+
+
+def get_bundle_dir() -> Path | None:
+    """获取打包资源所在目录（PyInstaller _MEIPASS）。"""
+    meipass = getattr(sys, '_MEIPASS', None)
+    return Path(meipass) if meipass is not None else None
+
+
 def set_work_dir(work_dir: str | Path | None) -> None:
     """显式设置项目工作目录。
 
@@ -82,7 +111,8 @@ def set_work_dir(work_dir: str | Path | None) -> None:
 def get_work_dir() -> str:
     """返回稳定的项目工作目录。
 
-    显式设置的目录优先；冻结运行时默认使用可执行文件所在目录，
+    显式设置的目录优先；冻结运行时先尝试取 Velopack 根目录，
+    命中返回它，否则返回可执行文件所在目录；
     源码运行时根据当前文件位置推导项目根目录。
 
     Returns:
@@ -90,7 +120,10 @@ def get_work_dir() -> str:
     """
     if _work_dir is not None:
         return str(_work_dir)
-    if run_in_exe():
+    if run_in_exe() or getattr(sys, 'frozen', False):
+        vpk_root = get_velopack_root()
+        if vpk_root is not None:
+            return str(vpk_root)
         return str(Path(sys.executable).resolve().parent)
     return str(Path(__file__).resolve().parents[3])
 
