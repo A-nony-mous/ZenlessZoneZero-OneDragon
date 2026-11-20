@@ -14,7 +14,7 @@
   ```bash
   git remote set-url --push origin DISABLED
   ```
-  执行后，任何向 `origin` 的 push 操作都会被 Git 客户端直接拒绝并报错，物理杜绝误推主仓风险。
+  执行后，任何向 `origin` 的 push 操作都会被 Git 客户端直接拒绝并报错（当前 arm-1 仓库已执行该配置生效），物理杜绝误推主仓风险。
 - **远端推送纪律**：
   所有阶段一律**不推 fork、不配推送凭据、不跑 GitHub Actions**。arm-1 仅作为本地编辑与单测环境，代码只在本地分支 `feat/velopack` 提交，后续由人类直接拉取。
 
@@ -172,9 +172,12 @@ stateDiagram-v2
 5. Bundle wheels (Environment.zip)          5. (移除 wheels 导出与打包)
 6. 准备发布物料 (prepare_release_assets.py):  6. 安装 Velopack CLI：
    - 下载嵌入式 cpython 运行时                   - dotnet tool install -g vpk
-   - 多次 zip 打包生成 Full/WithRuntime 等    7. 执行 vpk pack 打包并挂接签名钩子
-                                             8. 离线模型包构建 (assets/models)
-                                             9. 发布分支或 Artifact 收集
+   - 多次 zip 打包生成 Full/WithRuntime 等    7. 执行 vpk pack 打包，过程中自动调用签名钩子
+                                                (--signTemplate / --signParams)，
+                                                对 OneDragon.exe、Update.exe、Setup.exe
+                                                在封包前一次性完成数字签名
+                                             8. 构建离线模型包 (assets/models)
+                                             9. 发布分支创建 Release 或非发布上传 Artifacts
 ```
 
 ### 4.2 非发布构建路径与正式发布隔离防护
@@ -188,7 +191,7 @@ stateDiagram-v2
      CREATE_RELEASE: ${{ github.repository_owner == 'OneDragon-Anything' && ((github.event_name == 'workflow_dispatch' && inputs.create_release == true) || startsWith(github.ref, 'refs/tags/v')) }}
    ```
 2. **非发布构建逻辑（只出 Artifact，不建 Release、不跑 SignPath）**：
-   - **打包与 Pack 正常执行**：在 `windows-latest` runner 上运行 PyInstaller 与 `vpk pack --runtime win-x64`。
+   - **打包与 Pack 正常执行**：在 `windows-latest` runner 上运行 PyInstaller 与 `vpk pack --runtime win-x64`（未配置签名钩子时输出未签名的测试包）。
    - **SignPath 门禁拦截**：
      ```yaml
      sign:
@@ -209,30 +212,19 @@ stateDiagram-v2
      ```
      彻底杜绝非发布构建误建 Release、打 Git Tag 或向 CNB 发起镜像同步。
 
-### 4.3 签名机制与 Velopack 原生钩子整合
+### 4.3 规范 vpk pack 执行命令
 
-> [!WARNING]
-> **签名顺序的核心问题**：
-> `Update.exe` 和主程序 `OneDragon.exe` 在 `vpk pack` 执行期间就会被封装进 `Portable.zip` 和 `.nupkg` 内部。如果在 `vpk pack` 之后单独对输出目录的 `Update.exe` 签名，压缩包内的 `Update.exe` 依然是**未签名状态**，导致便携版用户解压升级时触发系统拦截。
+在 Windows Runner 的 PowerShell 环境下，执行以下打包命令（发布模式挂接 `--signTemplate`，测试模式不带签名）：
 
-#### 官方规范出处
-- **文档出处**：Velopack 官方代码签名文档 `docs/packaging/signing.mdx`（[Signing | Velopack Documentation](https://github.com/velopack/velopack.docs/blob/master/docs/packaging/signing.mdx)）
-
-#### 机制说明
-Velopack 官方原生支持在打包过程中对全部二进制执行原子签名钩子：
-- `--signParams <PARAMS>`：使用系统 `signtool.exe`，将签名参数直接传递给签名工具。
-- `--signTemplate <TEMPLATE>`：自定义签名命令模板，Velopack 在打包过程中自动将当前待签名二进制文件替换入 `{{file}}` 占位符。
-
-#### 打包执行时 Velopack 的内置调用顺序
-1. 遍历并调用签名钩子对 `--packDir` 内的主程序二进制（`OneDragon.exe`）执行签名；
-2. 生成并将便携版更新存根 `Update.exe` 调用签名钩子执行签名；
-3. 将已签名的 `OneDragon.exe` 与 `Update.exe` 封入 `.nupkg` 与 `Portable.zip`；
-4. 编译安装引导程序 `Setup.exe`，并对 `Setup.exe` 调用签名钩子执行签名。
-
-#### CI 正式发布流水线签名配置
-在正式发布构建（`CREATE_RELEASE == 'true'`）中，通过 `vpk pack` 的 `--signTemplate` 参数挂接 SignPath CLI 或本地签名工具：
 ```powershell
-# 使用 Velopack 自带签名钩子，保证包内外可执行体全部带有效签名
+# 1. 安装并信任 vpk 工具
+dotnet tool install -g vpk
+
+# 2. 提取剔除前导 v 的 SemVer 2.0.0 版本号
+$rawVersion = "${{ needs.version.outputs.version }}"
+$semver = $rawVersion.TrimStart('v')
+
+# 3. 执行打包（必须带 --runtime win-x64）
 vpk pack `
   --packId "ZenlessZoneZero-OneDragon" `
   --packVersion "$semver" `
@@ -242,25 +234,64 @@ vpk pack `
   --runtime win-x64 `
   --packTitle "ZenlessZoneZero-OneDragon" `
   --packAuthors "OneDragon-Anything" `
-  --signTemplate "signtool.exe sign /td sha256 /fd sha256 /a /tr http://timestamp.digicert.com {{file}}" `
   --outputDir "deploy\dist\releases"
 ```
-*(注：若使用 SignPath Cloud Action，等效顺序为：构建后提取 `OneDragon.exe` 与 vpk 内置的 `Update.exe` 统一提交第一轮云签名，替换回打包目录后再执行 `vpk pack`，最后对产出的 `Setup.exe` 提交第二轮签名)*。
 
-### 4.4 离线模型包来源、生成与解压契约
+> [!WARNING]
+> **关键约束**：
+> 1. 必须带 `--runtime win-x64`。若省略，vpk 默认打包为 win-x86，将导致 64 位 CPython 动态库加载失败引发崩溃。
+> 2. 版本号必须剔除前导 `v`（符合 SemVer 2.0.0 规范，如 `0.1.0-beta.1`）。
 
-#### 来源定义与配置复用
-离线模型包**严格复用现有代码库的声明与下载逻辑**，不新建独立配置：
+### 4.4 签名机制与 SignPath 整合规范（统一口径）
+
+> [!CRITICAL]
+> **签名顺序的核心问题与官方规范**：
+> - **问题根因**：`Update.exe` 和主程序 `OneDragon.exe` 在 `vpk pack` 执行期间就会被封装进 `Portable.zip` 和 `.nupkg` 内部。如果在 `vpk pack` 之后单独对输出目录的 `Update.exe` 签名，压缩包内的 `Update.exe` 依然是**未签名状态**，导致便携版用户解压升级时触发系统拦截。
+> - **官方文档出处**：Velopack 官方代码签名文档 `docs/packaging/signing.mdx`（[Signing | Velopack Documentation](https://github.com/velopack/velopack.docs/blob/master/docs/packaging/signing.mdx)）
+
+#### 机制说明
+Velopack 官方原生支持在打包过程中对全部二进制执行原子签名钩子：
+- `--signParams <PARAMS>`：使用系统 `signtool.exe`，将签名参数直接传递给签名工具（如 `/a /td sha256 /fd sha256`）。
+- `--signTemplate <TEMPLATE>`：自定义签名命令模板，Velopack 在打包过程中自动将当前待签名二进制文件替换入 `{{file}}` 占位符。
+
+#### 打包执行时 Velopack 的内置调用时序
+1. **主程序签名**：遍历 `--packDir`，调用签名钩子对主程序（`OneDragon.exe`）及原生依赖完成签名；
+2. **更新存根签名**：生成便携版更新存根 `Update.exe`，调用签名钩子对 `Update.exe` 完成签名；
+3. **安全封包**：将上述已签名的 `OneDragon.exe` 与 `Update.exe` 封装进 `Portable.zip` 和 `.nupkg`；
+4. **安装器签名**：编译安装向导 `Setup.exe`，并对最终的 `Setup.exe` 调用签名钩子完成签名。
+
+#### CI 正式发布流水线中的 SignPath 接入方案
+CI 在正式发布（`CREATE_RELEASE == 'true'`）时，通过 `--signTemplate` 调用 SignPath 逐文件签名脚本或本地代理工具：
+```powershell
+# 编写轻量签名桥接脚本 tools/ci/sign_file.py 调用 SignPath API
+vpk pack `
+  --packId "ZenlessZoneZero-OneDragon" `
+  --packVersion "$semver" `
+  --packDir "deploy\dist\OneDragon" `
+  --mainExe "OneDragon.exe" `
+  --runtime win-x64 `
+  --signTemplate "python tools/ci/sign_file.py {{file}}" `
+  --outputDir "deploy\dist\releases"
+```
+*(注：如果采用 GitHub Actions 云端打包签名，等效做法为：在 pack 前提取 `OneDragon.exe` 与 vpk 内置的 `Update.exe` 提交 SignPath 云端签名，回填已签名文件后再执行 pack，最后对产出的 `Setup.exe` 签名。无论何种做法，必须保证主 exe、Update.exe、Setup.exe 全部在封包闭环中受签名保护)*。
+
+### 4.5 离线模型包来源、生成与解压契约
+
+#### 来源定义与配置复用（精确代码位置）
+离线模型包**严格复用现有代码库的声明与下载逻辑**，不新建独立配置或散落 URL：
 - **配置来源**：`tools/ci/prepare_release_assets.py:214-250` 中的 `_MODEL_CONFIGS` 列表。
   具体包含 4 类必须模型：
-  1. `ppocrv6`: 仓库 `OneDragon-Anything/OneDragon-Env`，正则 `ppocrv6\.zip$`，目标目录 `assets/models/onnx_ocr`，默认降级地址为 `https://github.com/OneDragon-Anything/OneDragon-Env/releases/download/ppocrv6/ppocrv6.zip`。
-  2. `flash`: 仓库 `OneDragon-Anything/OneDragon-YOLO`，正则 `flash.*\.zip$`，目标目录 `assets/models/flash_classifier`，默认降级地址为 `https://github.com/OneDragon-Anything/OneDragon-YOLO/releases/download/zzz_model/yolov8n-640-flash-0127.zip`。
-  3. `hollow`: 仓库 `OneDragon-Anything/OneDragon-YOLO`，正则 `hollow.*\.zip$`，目标目录 `assets/models/hollow_zero_event`，默认降级地址为 `https://github.com/OneDragon-Anything/OneDragon-YOLO/releases/download/zzz_model/yolov8s-736-hollow-zero-event-0126.zip`。
-  4. `lost_void_det`: 仓库 `OneDragon-Anything/OneDragon-YOLO`，正则 `lost.*\.zip$`，目标目录 `assets/models/lost_void_det`，默认降级地址为 `https://github.com/OneDragon-Anything/OneDragon-YOLO/releases/download/zzz_model/yolov8n-736-lost-void-det-20250612.zip`。
-- **下载逻辑复用**：直接复用 `tools/ci/prepare_release_assets.py:251` 中的 `_download_models(model_base: Path, temp_dir: Path, *, token: str | None)` 函数。
+  1. `ppocrv6`: 仓库 `OneDragon-Anything/OneDragon-Env`，文件名正则 `ppocrv6\.zip$`，目标目录 `assets/models/onnx_ocr`，降级下载地址为 `https://github.com/OneDragon-Anything/OneDragon-Env/releases/download/ppocrv6/ppocrv6.zip`。
+  2. `flash`: 仓库 `OneDragon-Anything/OneDragon-YOLO`，文件名正则 `flash.*\.zip$`，目标目录 `assets/models/flash_classifier`，降级下载地址为 `https://github.com/OneDragon-Anything/OneDragon-YOLO/releases/download/zzz_model/yolov8n-640-flash-0127.zip`。
+  3. `hollow`: 仓库 `OneDragon-Anything/OneDragon-YOLO`，文件名正则 `hollow.*\.zip$`，目标目录 `assets/models/hollow_zero_event`，降级下载地址为 `https://github.com/OneDragon-Anything/OneDragon-YOLO/releases/download/zzz_model/yolov8s-736-hollow-zero-event-0126.zip`。
+  4. `lost_void_det`: 仓库 `OneDragon-Anything/OneDragon-YOLO`，文件名正则 `lost.*\.zip$`，目标目录 `assets/models/lost_void_det`，降级下载地址为 `https://github.com/OneDragon-Anything/OneDragon-YOLO/releases/download/zzz_model/yolov8n-736-lost-void-det-20250612.zip`。
+- **下载实现逻辑复用**：直接调用 `tools/ci/prepare_release_assets.py:251` 中的现有函数：
+  ```python
+  def _download_models(model_base: Path, temp_dir: Path, *, token: str | None) -> None
+  ```
 
 #### Zip 目录结构与根层解压契约
-离线模型包由 `prepare_release_assets.py` 中的 `_write_dir_contents`（第 202 行）生成，必须带 `assets/models` 根前缀：
+离线模型包由 `tools/ci/prepare_release_assets.py:202` 的 `_write_dir_contents` 生成，内部具有严格的 `assets/models` 根前缀：
 ```text
 ZenlessZoneZero-OneDragon-Models.zip
 └── assets/
@@ -274,33 +305,32 @@ ZenlessZoneZero-OneDragon-Models.zip
         └── lost_void_det/
             └── yolov8n-736-lost-void-det-20250612/
 ```
-用户下载该附件后，解压到程序根目录 `<RootAppDir>`，文件将自动精准落入 `<RootAppDir>/assets/models/`，与应用运行时代码契约完全重合，实现离线即用。
+用户下载该附件后，解压到程序根目录 `<RootAppDir>`，文件将自动精准落入 `<RootAppDir>/assets/models/<类别>/<模型名>/...`，与应用运行时代码契约完全重合，实现解压即离线可用。
 
 ---
 
 ## 5. 验证矩阵
 
-根据人类最新拍板意见：**验证矩阵精简为两栏，严谨划分「arm-1 上验到哪一步（mock 单测只证明逻辑，不等于验收通过）」与「交人类在 Windows 上验（未验）」**。
-对于第二栏，逐条附带清晰可执行的人类验证步骤、PowerShell 命令与预期基准：
+根据人类最终拍板意见：**验证矩阵精简为两栏，严谨划分「arm-1 上验到哪一步（mock 单测只证明逻辑，不等于验收通过）」与「交人类在 Windows 上验（未验，附可直接执行的步骤与断言）」**：
 
 | 验收标准 | 栏目 1：arm-1 上验到哪一步（mock 单测只证明逻辑，不等于验收通过） | 栏目 2：交人类在 Windows 上验（未验，附可直接执行的步骤与断言） |
 | :--- | :--- | :--- |
-| **1. `vpk pack` 一条命令产出 `Setup.exe` 与 `Portable.zip`，两者都能装/解压后启动** | 1. 运行 `ruff check src/ deploy/ tools/` 校验代码规范；<br>2. 运行单测静态解析 `OneDragon-Portable.spec`，断言入口、datas 资源路径存在性；<br>3. 校验 `pyproject.toml` 语法。<br>*(不能在 arm-1 上构建 exe，不代表打包通过)* | **人类 Windows 验证步骤（同一份代码连续 pack 两次）**：<br>1. 先用 PyInstaller 构建出一份单目录产物：<br>   `cd deploy; pyinstaller OneDragon-Portable.spec --noconfirm --clean`<br>2. 打包第 1 个版本（`0.1.0-beta.1`）：<br>   `vpk pack --packId ZenlessZoneZero-OneDragon --packVersion 0.1.0-beta.1 --packDir deploy\dist\OneDragon --mainExe OneDragon.exe --runtime win-x64 --outputDir deploy\dist\releases_v1`<br>3. 打包第 2 个版本（`0.1.0-beta.2`）：<br>   `vpk pack --packId ZenlessZoneZero-OneDragon --packVersion 0.1.0-beta.2 --packDir deploy\dist\OneDragon --mainExe OneDragon.exe --runtime win-x64 --outputDir deploy\dist\releases_v2`<br>4. 断言两个目录均正确生成 `Setup.exe`、`win-Portable.zip`、`RELEASES`、`releases.win.json` 与 `.nupkg`；安装 Setup.exe 与解压 Portable 双击启动验证。 |
-| **2. 解压到全新目录启动后，根层自动生成 `config/assets/custom/.log`，四类只读资源到位** | **单测 Mock 覆盖（只证明逻辑正确）**：<br>编写 `tests/test_bundle_seed.py`：<br>1. Mock `sys.frozen=True`, `sys.executable="/mock/app/current/OneDragon.exe"`, `sys._MEIPASS="/mock/bundle"`;<br>2. 模拟全新空目录执行 `ensure_work_dir_ready()`；<br>3. 断言四类只读目录文件复制与 `.bundle_seed_version` 写入。 | **人类 Windows 验证步骤（含精确计数命令）**：<br>1. 将 `releases_v1` 下的 `ZenlessZoneZero-OneDragon-win-Portable.zip` 解压至全新空目录（如 `C:\TestOneDragon`）；<br>2. 启动根层 `OneDragon.exe`，等待 30–60 秒完成首启播种；<br>3. **断言目录生成**：检查根层存在 `config`、`assets`、`custom`、`.log`；<br>4. **断言文件数基准（PowerShell 命令）**：<br>   `(Get-ChildItem -Path .\assets\template -Recurse -File).Count` 断言等于 **1820**<br>   `(Get-ChildItem -Path .\assets\ui -Recurse -File).Count` 断言等于 **10**<br>   `(Get-ChildItem -Path .\assets\text -Recurse -File).Count` 断言等于 **8**<br>   `(Get-ChildItem -Path .\assets\game_data -Recurse -File).Count` 断言等于 **178**<br>5. 验证完成后结束/终止进程。 |
-| **3. 改根层 `config/project.yml` 后升级，改动保留、`current/` 被替换** | **单测 Mock 覆盖（只证明逻辑正确）**：<br>1. 预置含用户自定义字段（如 `test_key: custom_val`）的 `config/project.yml`；<br>2. 模拟新版本环境执行 `ensure_work_dir_ready()`；<br>3. 断言用户自定义配置未被覆盖，只读资源得到更新。 | **人类 Windows 验证步骤（就地升级断言）**：<br>1. 在第 2 步的运行环境中，修改根层 `config/project.yml`（追加一行 `test_custom_marker: "verified"`）；<br>2. 在命令行执行升级应用：<br>   `.\Update.exe apply -p deploy\dist\releases_v2\ZenlessZoneZero-OneDragon-0.1.0-beta.2-full.nupkg --norestart`<br>3. **断言版本升级**：检查 `current/sq.version` 文件，确认内容已变为 `0.1.0-beta.2`；<br>4. **断言配置保留**：打开 `config/project.yml`，断言此前添加的 `test_custom_marker` 依然完好保留。 |
+| **1. `vpk pack` 一条命令产出 `Setup.exe` 与 `Portable.zip`，两者都能装/解压后启动** | 1. 运行 `ruff check src/ deploy/ tools/` 校验代码规范；<br>2. 运行单测静态解析 `OneDragon-Portable.spec`，断言入口、datas 资源路径存在性；<br>3. 校验 `pyproject.toml` 语法。<br>*(不能在 arm-1 上构建 exe，不代表打包通过)* | **人类 Windows 验证步骤（同一份代码连续 pack 两次完整命令）**：<br>1. 先用 PyInstaller 构建出一份单目录产物：<br>   `cd deploy; pyinstaller OneDragon-Portable.spec --noconfirm --clean`<br>2. 打包第 1 个版本（`0.1.0-beta.1`）：<br>   `vpk pack --packId ZenlessZoneZero-OneDragon --packVersion 0.1.0-beta.1 --packDir deploy\dist\OneDragon --mainExe OneDragon.exe --runtime win-x64 --outputDir deploy\dist\releases`<br>3. 同一份代码打包第 2 个版本（`0.1.0-beta.2`，**输出到同一个 outputDir**）：<br>   `vpk pack --packId ZenlessZoneZero-OneDragon --packVersion 0.1.0-beta.2 --packDir deploy\dist\OneDragon --mainExe OneDragon.exe --runtime win-x64 --outputDir deploy\dist\releases`<br>4. 断言目录正确生成 `Setup.exe`、`win-Portable.zip`、`RELEASES`、`releases.win.json` 与 `.nupkg`；安装 Setup.exe 与解压 Portable 双击启动验证。 |
+| **2. 解压到全新目录启动后，根层自动生成 `config/assets/custom/.log`，四类只读资源到位** | **单测 Mock 覆盖（只证明逻辑正确）**：<br>编写 `tests/test_bundle_seed.py`：<br>1. Mock `sys.frozen=True`, `sys.executable="/mock/app/current/OneDragon.exe"`, `sys._MEIPASS="/mock/bundle"`;<br>2. 模拟全新空目录执行 `ensure_work_dir_ready()`；<br>3. 断言四类只读目录文件复制与 `.bundle_seed_version` 写入。 | **人类 Windows 验证步骤（含直接粘贴的 PowerShell 计数命令）**：<br>1. 将生成的 `ZenlessZoneZero-OneDragon-win-Portable.zip` 解压至全新空目录（如 `C:\TestOneDragon`）；<br>2. 启动根层 `OneDragon.exe`，等待 30–60 秒完成首启播种；<br>3. **断言目录生成**：检查根层存在 `config`、`assets`、`custom`、`.log`；<br>4. **断言文件数基准（可直接粘贴执行的 PowerShell 命令）**：<br>   `(Get-ChildItem -Path .\assets\template -Recurse -File).Count` 断言等于 **1820**<br>   `(Get-ChildItem -Path .\assets\ui -Recurse -File).Count` 断言等于 **10**<br>   `(Get-ChildItem -Path .\assets\text -Recurse -File).Count` 断言等于 **8**<br>   `(Get-ChildItem -Path .\assets\game_data -Recurse -File).Count` 断言等于 **178**<br>5. 验证完成后结束/终止进程。 |
+| **3. 改根层 `config/project.yml` 后升级，改动保留、`current/` 被替换** | **单测 Mock 覆盖（只证明逻辑正确）**：<br>1. 预置含用户自定义字段（如 `test_key: custom_val`）的 `config/project.yml`；<br>2. 模拟新版本环境执行 `ensure_work_dir_ready()`；<br>3. 断言用户自定义配置未被覆盖，只读资源得到更新。 | **人类 Windows 验证步骤（就地升级断言）**：<br>1. 在第 2 步的运行环境中，修改根层 `config/project.yml`（追加一行 `test_custom_marker: "verified"`）；<br>2. 在命令行执行升级应用：<br>   `.\Update.exe apply -p deploy\dist\releases\ZenlessZoneZero-OneDragon-0.1.0-beta.2-full.nupkg --norestart`<br>3. **断言版本升级**：检查 `current/sq.version` 文件，确认内容已变为 `0.1.0-beta.2`；<br>4. **断言配置保留**：打开 `config/project.yml`，断言此前添加的 `test_custom_marker` 依然完好保留。 |
 | **4. 完整日志里不再出现「不是有效的 Git 仓库」** | **单测 Mock 覆盖（只证明逻辑正确）**：<br>编写 `tests/test_git_service_fallback.py`：<br>1. Mock `is_velopack_mode() = True` 且工作目录无 `.git`；<br>2. 遍历调用 `is_current_branch_latest`、`fetch_total_commit`、`fetch_page_commit`、`get_current_version`、`get_head_commit_id`、`telemetry.initialize()`；<br>3. 断言日志中零次出现 `ValueError: 目录 xxx 不是有效的 Git 仓库` 且无多源重试 warning。 | **人类 Windows 验证步骤（日志检索）**：<br>1. 升级完成后，再次双击启动根层 `OneDragon.exe`；<br>2. 打开应用后正常浏览各界面约 1 分钟；<br>3. 在 PowerShell 执行日志检索：<br>   `Get-ChildItem -Path .\.log\*.log \| Select-String -Pattern "不是有效的 Git 仓库"`<br>4. **断言检索命中数为 0**。 |
 | **5. 源码模式 `python main.py` 行为与改造前一致** | **直接运行验证**：<br>1. 在 arm-1 上执行 `python3 main.py` 确保入口无语法或依赖缺失；<br>2. 断言 `is_velopack_mode()` 为 `False`；<br>3. 断言 `get_work_dir()` 正确解析为仓库根目录；<br>4. 执行既有测试套件 `pytest tests/` 全部通过。 | **人类 Windows 验证步骤**：<br>1. 在 Windows 开发环境拉取该分支；<br>2. 运行 `python main.py` 启动 GUI，测试核心自动化任务，确认与改造前完全一致。 |
-| **6. 跑完清理掉启动的进程，不留后台** | **源码模式验证**：<br>验证在 arm-1 上源码运行退出的清理行为。*(冻结版的后台进程清理在 arm-1 无法验证)* | **人类 Windows 验证步骤**：<br>1. 启动 `OneDragon.exe` 运行任务，正常点击右上角关闭按钮退出应用；<br>2. 打开任务管理器（Task Manager）的「详细信息」页面；<br>3. **断言无残留进程**：确认无任何残留的 `OneDragon.exe`、`Update.exe` 或孤儿 Python 进程。<br>*注：对于「点击界面更新按钮、肉眼查看窗口渲染」等人工交互细节，直接标为「未验证，写入交付说明供人类验收确认」。* |
+| **6. 跑完清理掉启动的进程，不留后台** | **代码走查说明**：<br>代码走查 `updater.py` 与 `app.py::closeEvent` 退出逻辑。<br>*(注：此项在 arm-1 上仅为静态代码走查，不等于验收通过；冻结版进程清理交人类真机任务管理器验证)* | **人类 Windows 验证步骤**：<br>1. 启动 `OneDragon.exe` 运行任务，正常点击右上角关闭按钮退出应用；<br>2. 打开任务管理器（Task Manager）的「详细信息」页面；<br>3. **断言无残留进程**：确认无任何残留的 `OneDragon.exe`、`Update.exe` 或孤儿 Python 进程。<br>*注：对于「点击界面更新按钮、肉眼查看窗口渲染」等人工交互细节，直接标为「未验证，写入交付说明供人类验收确认」。* |
 
 ---
 
 ## 6. 风险评估与应对策略
 
-### 6.1 签名与 Windows SmartScreen 拦截风险
+### 6.1 签名与 Windows SmartScreen 拦截风险（统一口径）
 - **风险**：
-  若 SignPath 签名遗漏了 `Setup.exe`、`Update.exe` 或 `OneDragon.exe` 中的任何一个，用户在 Windows 10/11 安装或升级时将遭遇 SmartScreen 强力拦截甚至被杀毒软件误杀。
+  若 SignPath 签名遗漏了 `Setup.exe`、`Update.exe` 或 `OneDragon.exe` 中的任何一个，用户在 Windows 10/11 安装或升级时将遭遇 SmartScreen 强力拦截甚至被杀毒软件误杀。尤其若在 `vpk pack` 之后才去签名输出目录中的 `Update.exe`，压缩包 `Portable.zip` 和 `.nupkg` 内部封存的 `Update.exe` 仍为未签名状态。
 - **应对策略**：
-  严格采用 Velopack 内置的 `--signTemplate` / `--signParams` 机制，在 `vpk pack` 生成可执行体并打入压缩包的过程中同步完成签名，确保所有包内与包外的二进制体均包含合法数字签名。
+  统一采用 Velopack 内置的 `--signTemplate` / `--signParams` 原生机制，在 `vpk pack` 执行期间由 Velopack 原子替换待打包的主程序二进制、包内及包外的 `Update.exe` 与编译生成的 `Setup.exe` 进行签名，彻底保证包内外所有二进制全部携带合法数字签名。
 
 ### 6.2 发布流水线与国内 CDN 同步风险
 - **风险**：
