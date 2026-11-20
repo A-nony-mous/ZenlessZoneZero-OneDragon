@@ -15,15 +15,21 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from qfluentwidgets import (
+    BodyLabel,
     FluentIcon,
     InfoBar,
     InfoBarPosition,
+    MessageBox,
+    MessageBoxBase,
     PillPushButton,
+    ProgressBar,
+    SubtitleLabel,
     setCustomStyleSheet,
 )
 
 from one_dragon.base.config.custom_config import BackgroundTypeEnum
-from one_dragon.utils import os_utils
+from one_dragon.utils import os_utils, updater
+from one_dragon.utils.i18_utils import gt
 from one_dragon.utils.log_utils import log
 from one_dragon_qt.services.theme_manager import ThemeManager
 from one_dragon_qt.utils.color_utils import get_foreground_color
@@ -166,6 +172,66 @@ class FlagCheckRunner(BaseThread):
             self.need_update.emit(self.check_func(self.ctx))
         except Exception as e:
             log.error(f"Check runner failed: {e}")
+
+
+class VelopackCheckRunner(BaseThread):
+    """在后台执行 Velopack 更新检查。"""
+
+    checked = Signal(object)
+
+    def _run_impl(self):
+        try:
+            info = updater.check_for_updates()
+            self.checked.emit(info)
+        except Exception as e:
+            log.error(f"Velopack check failed: {e}")
+            self.checked.emit(None)
+
+
+class VelopackDownloadRunner(BaseThread):
+    """在后台下载 Velopack 更新包。"""
+
+    progress = Signal(int)
+    completed = Signal(bool, str, object)
+
+    def __init__(self, update_info: object, parent=None):
+        super().__init__(parent)
+        self.update_info = update_info
+
+    def _run_impl(self):
+        try:
+            updater.download_updates(
+                self.update_info,
+                callback=self._on_progress,
+            )
+            self.completed.emit(True, "", self.update_info)
+        except Exception as e:
+            log.error(f"Velopack download failed: {e}")
+            self.completed.emit(False, str(e), self.update_info)
+
+    def _on_progress(self, val: int):
+        self.progress.emit(val)
+
+
+class VelopackDownloadDialog(MessageBoxBase):
+    """更新下载进度弹窗。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.titleLabel = SubtitleLabel(gt('正在下载新版本更新...'))
+        self.progress_bar = ProgressBar(self)
+        self.progress_bar.setValue(0)
+        self.status_label = BodyLabel('0%')
+        self.viewLayout.addWidget(self.titleLabel)
+        self.viewLayout.addWidget(self.progress_bar)
+        self.viewLayout.addWidget(self.status_label)
+        self.yesButton.hide()
+        self.cancelButton.hide()
+
+    def set_progress(self, val: int) -> None:
+        self.progress_bar.setValue(val)
+        self.status_label.setText(f'{val}%')
+
 
 class BackgroundImageDownloader(BaseThread):
     """背景图片下载器"""
@@ -357,6 +423,7 @@ class HomeInterface(BaseInterface):
         self._last_applied_theme_color: tuple[int, int, int] | None = None
 
         self._init_check_runners()
+        self._init_update_runner()
         self._init_ui()
 
     def _init_ui(self) -> None:
@@ -460,6 +527,64 @@ class HomeInterface(BaseInterface):
             Qt.ConnectionType.BlockingQueuedConnection
         )
 
+    def _init_update_runner(self) -> None:
+        """初始化 Velopack 更新相关运行器与状态。"""
+        self._velopack_check_runner = VelopackCheckRunner(parent=self)
+        self._velopack_check_runner.checked.connect(self._on_update_status_changed)
+        self._download_dialog: VelopackDownloadDialog | None = None
+        self._download_runner: VelopackDownloadRunner | None = None
+
+    def _on_update_status_changed(self, update_info: object) -> None:
+        """处理 Velopack 更新检查返回的状态。"""
+        if update_info is None:
+            return
+
+        target_release = getattr(update_info, 'TargetFullRelease', None)
+        version_str = getattr(target_release, 'Version', '') if target_release else ''
+        title = f"{gt('发现新版本')} v{version_str}" if version_str else gt('发现新版本')
+        content = gt('已有新版本就绪，是否立即下载更新？')
+
+        box = MessageBox(title, content, self.window())
+        box.yesButton.setText(gt('下载更新'))
+        box.cancelButton.setText(gt('稍后提醒'))
+        if box.exec():
+            self._start_download_update(update_info)
+
+    def _start_download_update(self, update_info: object) -> None:
+        """启动更新包下载流程。"""
+        self._download_dialog = VelopackDownloadDialog(self.window())
+        self._download_runner = VelopackDownloadRunner(update_info, parent=self)
+        self._download_runner.progress.connect(self._download_dialog.set_progress)
+        self._download_runner.completed.connect(self._on_download_completed)
+        self._download_runner.start()
+        self._download_dialog.exec()
+
+    def _on_download_completed(self, success: bool, msg: str, update_info: object) -> None:
+        """下载完成回调。"""
+        if self._download_dialog is not None:
+            self._download_dialog.close()
+            self._download_dialog = None
+        self._download_runner = None
+
+        if not success:
+            InfoBar.error(gt('更新下载失败'), msg, duration=5000, parent=self)
+            return
+
+        box = MessageBox(
+            gt('更新已就绪'),
+            gt('新版本已下载完毕，重启应用即可生效。\n是否立即重启？'),
+            self.window(),
+        )
+        box.yesButton.setText(gt('立即重启'))
+        box.cancelButton.setText(gt('下次启动时应用'))
+        if box.exec():
+            updater.apply_updates(update_info, restart=True)
+            from PySide6.QtWidgets import QApplication
+
+            QApplication.quit()
+        else:
+            updater.apply_updates(update_info, restart=False)
+
     def showEvent(self, event) -> None:
         """首次显示首页时立即应用标题栏样式，避免需要切页后才生效。"""
         QWidget.showEvent(self, event)
@@ -490,13 +615,17 @@ class HomeInterface(BaseInterface):
             self.main_window.areaLayout.setContentsMargins(0, 0, 0, 0)
             self._set_title_bar_home_mode(True)
 
-        check_resource_updates = getattr(
-            self.main_window,
-            'check_resource_updates',
-            None,
-        )
-        if callable(check_resource_updates):
-            check_resource_updates()
+        if os_utils.is_velopack_mode():
+            if not self._velopack_check_runner.isRunning() and self._download_runner is None:
+                self._velopack_check_runner.start()
+        else:
+            check_resource_updates = getattr(
+                self.main_window,
+                'check_resource_updates',
+                None,
+            )
+            if callable(check_resource_updates):
+                check_resource_updates()
 
         # Banner 刷新检查不需要冷却，因为它依赖信号
         if not self._check_banner_runner.isRunning():
@@ -536,6 +665,8 @@ class HomeInterface(BaseInterface):
             self._banner_widget.pause_media()
 
         # 停止所有下载器，避免后台占用资源
+        if self._velopack_check_runner.isRunning():
+            self._velopack_check_runner.stop()
         if self._version_poster_downloader.isRunning():
             self._version_poster_downloader.stop()
         if self._static_background_downloader.isRunning():
