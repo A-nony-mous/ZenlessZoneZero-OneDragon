@@ -27,6 +27,7 @@ from one_dragon.envs.env_config import ProxyTypeEnum
 from one_dragon.envs.git_service import GitLog, GitSyncStatus
 from one_dragon.envs.repo_config import ModelResourceDefinition
 from one_dragon.envs.update_service import LauncherType
+from one_dragon.utils import os_utils
 from one_dragon.utils.app_utils import start_one_dragon
 from one_dragon.utils.i18_utils import gt
 from one_dragon.utils.log_utils import log
@@ -325,6 +326,12 @@ class ResourceManagementInterface(VerticalScrollInterface):
         )
         self.download_items_group.addSettingCard(self.launcher_opt)
 
+        if os_utils.is_velopack_mode():
+            self.code_card.hide()
+            self.history_button.hide()
+            self.settings_button.hide()
+            self.launcher_opt.hide()
+
         self.ocr_opt = self._create_model_card(
             title='OCR识别',
             options=get_ocr_opts(),
@@ -576,6 +583,8 @@ class ResourceManagementInterface(VerticalScrollInterface):
 
     def _show_history_dialog(self) -> None:
         """按需加载并展示代码版本记录。"""
+        if os_utils.is_velopack_mode():
+            return
         if not hasattr(self, 'history_dialog'):
             self.history_dialog = MessageBoxBase(self.window())
             self.history_dialog.yesButton.setText(gt('关闭'))
@@ -589,6 +598,8 @@ class ResourceManagementInterface(VerticalScrollInterface):
 
     def _show_code_settings_dialog(self) -> None:
         """打开代码同步设置弹窗。"""
+        if os_utils.is_velopack_mode():
+            return
         self._refresh_code_settings()
         if not hasattr(self, 'code_settings_dialog'):
             self.code_settings_dialog = MessageBoxBase(self.window())
@@ -609,11 +620,12 @@ class ResourceManagementInterface(VerticalScrollInterface):
         :return:
         """
         VerticalScrollInterface.on_interface_shown(self)
-        self._refresh_code_settings()
-        self.code_card.git_branch_opt.init_with_value(
-            self.ctx.env_config.git_branch
-        )
-        self.code_card.check_and_update_display()
+        if not os_utils.is_velopack_mode():
+            self._refresh_code_settings()
+            self.code_card.git_branch_opt.init_with_value(
+                self.ctx.env_config.git_branch
+            )
+            self.code_card.check_and_update_display()
         self.resource_source_opt.init_with_adapter(
             self.ctx.env_config.get_prop_adapter('resource_source')
         )
@@ -681,6 +693,8 @@ class ResourceManagementInterface(VerticalScrollInterface):
         开始获取总数
         :return:
         """
+        if os_utils.is_velopack_mode():
+            return
         if self.fetch_total_runner.isRunning():
             return
         self.fetch_total_runner.start()

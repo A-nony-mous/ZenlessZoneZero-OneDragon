@@ -15,6 +15,7 @@ from one_dragon.base.operation.context_download_request_event import (
 )
 from one_dragon.base.web.zip_downloader import ZipDownloader
 from one_dragon.envs.update_service import LauncherType
+from one_dragon.utils import os_utils
 from one_dragon.utils.i18_utils import gt
 from one_dragon.utils.log_utils import log
 from one_dragon_qt.services.download_queue_service import (
@@ -95,13 +96,14 @@ class ResourceUpdateCoordinator(QObject):
         self._check_interval: float = 300
         self._checks_started: bool = False
 
-        self._register_check(
-            _ResourceCheck(
-                check_id='launcher',
-                check_update=self.ctx.update_service.is_launcher_update_available,
-                build_specs=self._build_launcher_specs,
+        if not os_utils.is_velopack_mode():
+            self._register_check(
+                _ResourceCheck(
+                    check_id='launcher',
+                    check_update=self.ctx.update_service.is_launcher_update_available,
+                    build_specs=self._build_launcher_specs,
+                )
             )
-        )
         self._register_check(
             _ResourceCheck(
                 check_id='project_models',

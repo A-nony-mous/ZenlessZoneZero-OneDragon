@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+from one_dragon.utils import os_utils
 from one_dragon.utils.log_utils import log
 
 from .aliyun_web_tracking import AliyunWebTrackingClient
@@ -107,6 +108,8 @@ class TelemetryManager:
 
     def _get_commit_version(self) -> str:
         """通过 git_service 获取当前 HEAD 的短 commit hash"""
+        if os_utils.is_velopack_mode():
+            return "velopack"
         return self.ctx.git_service.get_head_commit_id(short=True) or "unknown"
 
     @staticmethod

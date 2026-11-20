@@ -14,7 +14,7 @@ def load_runtime_manifest() -> bytes | None:
         return None
 
     runtime_dir = Path(getattr(sys, '_MEIPASS', ''))
-    manifest_path = runtime_dir / 'module_manifest.py'
+    manifest_path = runtime_dir / 'runtime_manifest.py'
     if not manifest_path.is_file():
         return None
 

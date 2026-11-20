@@ -602,6 +602,9 @@ class GitService:
             self._repo = None
 
         if self._repo is None:
+            if os_utils.is_velopack_mode():
+                raise ValueError('Velopack 模式下不使用 Git 仓库')
+
             # 检查是否是有效的 git 仓库
             git_dir = discover_repository(self.repo_dir)
             if not git_dir:
@@ -1377,7 +1380,7 @@ class GitService:
 
         Args:
             commit_oid: 提交 OID
-            file_path: 相对于仓库根目录的文件路径（如 'deploy/module_manifest.py'）
+            file_path: 相对于仓库根目录的文件路径（如 'config/project.yml'）
 
         Returns:
             文件内容的字节，文件不存在时返回 None
@@ -1675,6 +1678,8 @@ class GitService:
 
     def check_repo_exists(self) -> bool:
         """检查本地仓库是否存在。"""
+        if os_utils.is_velopack_mode():
+            return False
         return discover_repository(self.repo_dir) is not None
 
     def is_initial_checkout_pending(self) -> bool:
@@ -1695,6 +1700,9 @@ class GitService:
         initial_tag: str | None = None,
     ) -> tuple[GitSyncStatus, str]:
         """更新最新代码，并返回明确的同步状态和中性结果文案。"""
+        if os_utils.is_velopack_mode():
+            return GitSyncStatus.SUCCESS, '当前为自动升级版本，无需同步源码'
+
         try:
             if self.is_initial_checkout_pending():
                 status, _ = self._clone_repository(progress_callback, initial_tag)
@@ -1709,6 +1717,9 @@ class GitService:
         """
         获取当前分支名称
         """
+        if os_utils.is_velopack_mode() or not self.check_repo_exists():
+            return None
+
         log.info(gt('检测当前代码分支'))
         try:
             repo = self._open_repo()
@@ -1720,6 +1731,9 @@ class GitService:
 
     def get_head_commit_id(self, short: bool = False) -> str | None:
         """获取当前 HEAD 的 commit hash"""
+        if os_utils.is_velopack_mode() or not self.check_repo_exists():
+            return None
+
         try:
             repo = self._open_repo()
             oid = str(repo.head.target)
@@ -1731,6 +1745,9 @@ class GitService:
         """
         当前分支是否已经最新 与远程分支一致
         """
+        if os_utils.is_velopack_mode() or not self.check_repo_exists():
+            return True, ''
+
         log.info(gt('检测当前代码是否最新'))
 
         fetch_status, message = self._fetch_remote()
@@ -1753,6 +1770,9 @@ class GitService:
         """
         获取commit的总数。获取失败时返回0
         """
+        if os_utils.is_velopack_mode() or not self.check_repo_exists():
+            return 0
+
         log.info(gt('获取commit总数'))
         walker = self._get_commit_walker()
         return sum(1 for _ in walker) if walker else 0
@@ -1767,6 +1787,9 @@ class GitService:
         Returns:
             GitLog列表
         """
+        if os_utils.is_velopack_mode() or not self.check_repo_exists():
+            return []
+
         log.info(f"{gt('获取commit')} 第{page_num + 1}页")
         walker = self._get_commit_walker()
         if not walker:
@@ -1792,7 +1815,7 @@ class GitService:
         """
         更新remote
         """
-        if not self.check_repo_exists():
+        if os_utils.is_velopack_mode() or not self.check_repo_exists():
             return
 
         try:
@@ -1807,6 +1830,9 @@ class GitService:
         Returns:
             (是否成功, 提示消息)
         """
+        if os_utils.is_velopack_mode() or not self.check_repo_exists():
+            return False, 'Velopack 模式不支持回滚'
+
         try:
             repo = self._open_repo()
             obj = repo.revparse_single(commit_id)
@@ -1827,6 +1853,9 @@ class GitService:
         """
         获取当前代码版本
         """
+        if os_utils.is_velopack_mode() or not self.check_repo_exists():
+            return None
+
         logs = self.fetch_page_commit(0, 1)
         return logs[0].commit_id if logs else None
 

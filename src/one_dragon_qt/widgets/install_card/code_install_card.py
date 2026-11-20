@@ -6,6 +6,7 @@ from qfluentwidgets import FluentIcon, FluentThemeColor
 from one_dragon.base.config.config_item import ConfigItem
 from one_dragon.base.operation.one_dragon_env_context import OneDragonEnvContext
 from one_dragon.envs.git_service import GitSyncStatus
+from one_dragon.utils import os_utils
 from one_dragon.utils.i18_utils import gt
 from one_dragon_qt.widgets.combo_box import ComboBox
 from one_dragon_qt.widgets.install_card.base_install_card import BaseInstallCard
@@ -32,6 +33,10 @@ class CodeInstallCard(BaseInstallCard):
             parent=parent,
             left_widgets=[self.git_branch_opt]
         )
+
+        if os_utils.is_velopack_mode():
+            self.install_btn.setEnabled(False)
+            self.git_branch_opt.setVisible(False)
 
         self.updated: bool = False  # 是否已经更新了
 
@@ -93,6 +98,9 @@ class CodeInstallCard(BaseInstallCard):
         获取需要显示的状态，由子类自行实现
         :return: 显示的图标、文本
         """
+        if os_utils.is_velopack_mode():
+            return FluentIcon.INFO.icon(color=FluentThemeColor.DEFAULT_BLUE.value), gt('已通过 Velopack 自动维护')
+
         current_branch = self.ctx.git_service.get_current_branch()
         if current_branch is None:
             return FluentIcon.INFO.icon(color=FluentThemeColor.RED.value), gt('未同步代码')
