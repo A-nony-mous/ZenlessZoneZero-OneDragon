@@ -1,9 +1,11 @@
 import contextlib
 import json
+import re
 import shutil
 import sys
 import tempfile
 import uuid
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from one_dragon.utils import os_utils
@@ -144,6 +146,90 @@ def _save_asset_seed_status(work_dir: Path, status: dict[str, str]) -> None:
         log.warning('写入 .bundle_seed_status.json 失败', exc_info=True)
 
 
+def parse_nuspec_version(xml_text: str) -> str | None:
+    """从 nuspec XML 内容中解析 <version> 节点文本。
+
+    优先使用 xml.etree.ElementTree，兼容任意命名空间；
+    XML 解析失败时使用稳妥的正则兜底。解析失败返回 None。
+    """
+    if not xml_text:
+        return None
+    try:
+        root = ET.fromstring(xml_text)
+        v_elem = root.find('.//{*}version')
+        if v_elem is not None and v_elem.text:
+            text = v_elem.text.strip()
+            if text:
+                return text
+        for elem in root.iter():
+            tag = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+            if tag.lower() == 'version' and elem.text:
+                text = elem.text.strip()
+                if text:
+                    return text
+    except Exception:
+        pass
+
+    try:
+        m = re.search(r'<(?:\w+:)?version\b[^>]*>([^<]+)</(?:\w+:)?version>', xml_text, re.IGNORECASE)
+        if m:
+            text = m.group(1).strip()
+            if text:
+                return text
+    except Exception:
+        pass
+
+    return None
+
+
+def get_current_package_version() -> str:
+    """获取当前软件包的纯版本号。
+
+    1. 从 sys.executable 同级或 Velopack 目录下的 sq.version 中解析 <version> 节点；
+    2. 若解析失败或不存在，依次回退：
+       - updater.get_current_version()
+       - one_dragon.version.__version__
+       - 'unknown'
+    写进标记文件、状态文件及 --version 输出的均为此纯版本号（例如 '0.1.0-beta.1'）。
+    """
+    # 1. 尝试从 sq.version 解析
+    with contextlib.suppress(Exception):
+        exe_parent = Path(sys.executable).resolve().parent
+        sq_version_file = exe_parent / 'sq.version'
+        if not sq_version_file.exists():
+            vpk_root = os_utils.get_velopack_root()
+            if vpk_root is not None:
+                cand = vpk_root / 'current' / 'sq.version'
+                if cand.exists():
+                    sq_version_file = cand
+
+        if sq_version_file.exists():
+            raw_text = sq_version_file.read_text(encoding='utf-8').strip()
+            parsed = parse_nuspec_version(raw_text)
+            if parsed:
+                return parsed
+            if raw_text and '<' not in raw_text:
+                return raw_text
+
+    # 2. 回退到 updater.get_current_version()
+    with contextlib.suppress(Exception):
+        from one_dragon.utils import updater
+
+        ver = updater.get_current_version()
+        if ver:
+            return ver
+
+    # 3. 回退到 one_dragon.version.__version__
+    with contextlib.suppress(Exception):
+        from one_dragon.version import __version__
+
+        if __version__:
+            return __version__.strip()
+
+    # 4. 兜底
+    return 'unknown'
+
+
 def ensure_work_dir_ready() -> None:
     """冻结环境首次启动与升级后资源初始化与配置补齐。
 
@@ -158,6 +244,11 @@ def ensure_work_dir_ready() -> None:
     4. 四类资源目录全部播种成功后，版本标记写入根目录的 .bundle_seed_version；
     5. 若有资源目录失败，记录失败状态（通过 has_seed_error() 供主窗口弹出一次性告警），下次启动只重试未完成项；
     6. 整体出错只记录日志，不向外抛出未捕获异常。
+
+    老版本兼容说明：
+    已有用户的 .bundle_seed_version 和 .bundle_seed_status.json 中可能存有历史的 nuspec XML 全文。
+    升级到本版本后，由于 XML 全文与解析出的纯版本号不相等，会触发一次全量重新播种。
+    播种完成后以纯版本号覆写标记文件与状态文件，后续启动将命中版本匹配，仅全量重播一次，不会每次启动都重来。
     """
     if not (os_utils.run_in_exe() or getattr(sys, 'frozen', False)):
         return
@@ -202,22 +293,7 @@ def _ensure_work_dir_ready_impl() -> None:
                     log.warning('处理配置文件失败: %s', item, exc_info=True)
 
     # 2. 确定当前包版本
-    current_version: str | None = None
-    with contextlib.suppress(Exception):
-        exe_parent = Path(sys.executable).resolve().parent
-        sq_version_file = exe_parent / 'sq.version'
-        if sq_version_file.exists():
-            current_version = sq_version_file.read_text(encoding='utf-8').strip()
-
-    if not current_version:
-        with contextlib.suppress(Exception):
-            from one_dragon.version import __version__
-
-            if __version__ and __version__ != 'v0.0.0':
-                current_version = __version__
-
-    if not current_version:
-        current_version = 'unknown'
+    current_version = get_current_package_version()
 
     seed_version_file = work_dir / '.bundle_seed_version'
     last_seed_version: str | None = None

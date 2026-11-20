@@ -64,8 +64,13 @@ class UpdateService:
         cached = self._launcher_version_cache.get(launcher_type)
         if cached is not None:
             return cached
-        exe_path = Path(os_utils.get_work_dir()) / self.get_launcher_exe_name(launcher_type)
-        current_version = app_utils.get_exe_version(str(exe_path)) if exe_path.exists() else ''
+        if os_utils.is_velopack_mode():
+            from one_dragon.utils import updater
+
+            current_version = updater.get_current_version()
+        else:
+            exe_path = Path(os_utils.get_work_dir()) / self.get_launcher_exe_name(launcher_type)
+            current_version = app_utils.get_exe_version(str(exe_path)) if exe_path.exists() else ''
         try:
             latest_stable, latest_beta = self.git_service.get_latest_tag()
         except Exception:

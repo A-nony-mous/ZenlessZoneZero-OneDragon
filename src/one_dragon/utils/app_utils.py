@@ -37,6 +37,21 @@ def get_exe_version(exe_path: str) -> str:
     Returns:
         str: 版本号，失败返回空字符串
     """
+    if os_utils.is_velopack_mode():
+        try:
+            target = Path(exe_path).resolve()
+            if target == Path(sys.executable).resolve():
+                from one_dragon.utils import updater
+
+                return updater.get_current_version()
+            vpk_root = os_utils.get_velopack_root()
+            if vpk_root is not None and (target == vpk_root or vpk_root in target.parents):
+                from one_dragon.utils import updater
+
+                return updater.get_current_version()
+        except Exception:
+            pass
+
     try:
         env = os.environ.copy()
         # 版本查询无需提权，也不能复用父启动器的 PyInstaller 临时环境
@@ -67,6 +82,11 @@ def get_launcher_version() -> str:
     Returns:
         str: 版本号
     """
+    if os_utils.is_velopack_mode():
+        from one_dragon.utils import updater
+
+        return updater.get_current_version()
+
     if getattr(sys, 'frozen', False):
         launcher_path = Path(sys.executable)
     else:

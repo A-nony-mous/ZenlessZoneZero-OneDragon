@@ -11,6 +11,17 @@ from one_dragon.utils.bundle_seed import ensure_work_dir_ready, get_seed_status_
 from one_dragon.utils.log_utils import log
 from one_dragon.utils.updater import init_velopack
 
+
+def _handle_version_arg() -> None:
+    """处理 --version 参数：打印当前包版本后退出，不进入 GUI 初始化或播种。"""
+    if "--version" in sys.argv:
+        print(bundle_seed.get_current_package_version())
+        sys.exit(0)
+
+
+if __name__ == "__main__":
+    _handle_version_arg()
+
 _init_error: str | None = None
 stack_trace: str = ""
 
@@ -375,6 +386,9 @@ def _record_startup_error(stack_trace_str: str, seed_status_str: str) -> None:
 
 # 初始化应用程序，并启动主窗口
 def main() -> None:
+    # 确保无论通过何种入口调用 main()，收到 --version 均立即退出
+    _handle_version_arg()
+
     # 无论模块导入是否失败，生命周期初始化与资源播种均优先执行且绝不向外抛出未捕获异常
     with contextlib.suppress(Exception):
         init_velopack()
