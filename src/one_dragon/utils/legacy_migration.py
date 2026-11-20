@@ -77,6 +77,21 @@ class MigrationConflictError(MigrationError):
     """迁移过程出现未决冲突或用户取消。"""
 
 
+class MigrationRollbackFailedError(MigrationError):
+    """迁移失败后逆序回滚未完全成功，或新根层未能完全还原至迁移前初始状态。
+
+    为了绝对避免用户数据丢失，已保留安全网备份目录与事务临时目录。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        preserved_paths: list[str] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.preserved_paths: list[str] = preserved_paths or []
+
+
 def _compute_file_sha256(file_path: Path) -> str:
     """计算单个文件的 SHA-256 哈希值（只读安全）。"""
     h = hashlib.sha256()
@@ -178,8 +193,8 @@ def has_user_configured(work_dir: Path) -> tuple[bool, list[str]]:
     2. 存在仅用户交互才会生成的私有配置文件（如 config/game_account.yml, config/one_dragon.yml）；
     3. config/env.yml 存在且包含脱离默认值的关键配置（如 game_path 非空、代理设置已填入等）；
     4. 播种的基础配置文件（如 config/project.yml）哈希与包内模板不同；
-    5. custom/ 目录下存在用户自定义素材文件（如 custom/assets/ui/banner）；
-    6. assets/models/ 目录下存在已下载的模型文件。
+    5. custom/ 目录下存在用户自定义素材文件（如 custom/assets/ui/banner）。
+    （注：assets/models/ 下的模型文件为运行时/预打包下载的模型权重，不计入用户私有配置判定，避免误判）。
 
     Returns:
         (has_configured, reasons): 是否已修改及命中的判定原因列表。
@@ -243,13 +258,9 @@ def has_user_configured(work_dir: Path) -> tuple[bool, list[str]]:
                 reasons.append(f"custom/ 存在自定义素材: {f.name}")
                 break
 
-    # 6. 检查 assets/models（用户已放入或下载过模型）
-    models_dir = work_dir / "assets" / "models"
-    if models_dir.is_dir():
-        for f in models_dir.rglob("*"):
-            if f.is_file() and f.stat().st_size > 0:
-                reasons.append(f"assets/models 存在已下载模型文件: {f.name}")
-                break
+    # 注意：assets/models/ 下的模型文件为运行时/预打包下载的 AI 权重资源，
+    # 不属于用户私有业务配置。若将模型计入用户配置，预打包模型或静默下载将导致
+    # 首启向导被永久抑制，因此此处不把模型存在作为已配置判定依据。
 
     return len(reasons) > 0, reasons
 
@@ -473,6 +484,19 @@ def _safe_rename(
             time.sleep(delay * (attempt + 1))
 
 
+def _safe_rmtree(path: Path) -> None:
+    """递归删除目录或文件；若失败则记录警告日志，绝不静默吞错。"""
+    if not path.exists():
+        return
+    try:
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    except Exception as rm_err:
+        log.warning("清理路径 %s 失败: %s", path, rm_err)
+
+
 def _find_core_conflicts(
     old_data: dict[str, Any],
     new_data: dict[str, Any],
@@ -612,6 +636,37 @@ def execute_migration(
     # 迁移前拍下 3 个目标（config/, custom/, assets/models/）的初始 SHA-256 快照
     initial_targets_snapshot = _snapshot_targets(work_dir)
     backup_dir_path: Path | None = None
+
+    assets_dir = work_dir / "assets"
+    assets_existed_before = assets_dir.exists()
+
+    swap_targets: list[dict[str, Any]] = [
+        {
+            "name": "custom",
+            "target": work_dir / "custom",
+            "staging": staging_custom,
+            "tx_backup": work_dir / f".custom.tx_{staging_id}",
+            "existed_before": False,
+            "swapped": False,
+        },
+        {
+            "name": "models",
+            "target": work_dir / "assets" / "models",
+            "staging": staging_models,
+            "tx_backup": (work_dir / "assets") / f".models.tx_{staging_id}",
+            "existed_before": False,
+            "swapped": False,
+        },
+        {
+            "name": "config",
+            "target": work_dir / "config",
+            "staging": staging_config,
+            "tx_backup": work_dir / f".config.tx_{staging_id}",
+            "existed_before": False,
+            "swapped": False,
+        },
+    ]
+    swapped_targets: list[dict[str, Any]] = []
 
     try:
         # 若是延迟迁移：先生成持久快照 config_backup_<YYYYMMDD_HHMMSS>/
@@ -776,154 +831,153 @@ def execute_migration(
                         shutil.copy2(src_file, dst_file)
 
         # -------------------- 阶段二：两阶段原子替换 --------------------
-        assets_dir = work_dir / "assets"
-        assets_existed_before = assets_dir.exists()
+        for item in swap_targets:
+            target_p: Path = item["target"]
+            staging_p: Path = item["staging"]
+            tx_backup_p: Path = item["tx_backup"]
 
-        swap_targets: list[dict[str, Any]] = [
-            {
-                "name": "custom",
-                "target": work_dir / "custom",
-                "staging": staging_custom,
-                "tx_backup": work_dir / f".custom.tx_{staging_id}",
-                "existed_before": False,
-                "swapped": False,
-            },
-            {
-                "name": "models",
-                "target": work_dir / "assets" / "models",
-                "staging": staging_models,
-                "tx_backup": (work_dir / "assets") / f".models.tx_{staging_id}",
-                "existed_before": False,
-                "swapped": False,
-            },
-            {
-                "name": "config",
-                "target": work_dir / "config",
-                "staging": staging_config,
-                "tx_backup": work_dir / f".config.tx_{staging_id}",
-                "existed_before": False,
-                "swapped": False,
-            },
-        ]
-
-        swapped_targets: list[dict[str, Any]] = []
-
-        try:
-            for item in swap_targets:
-                target_p: Path = item["target"]
-                staging_p: Path = item["staging"]
-                tx_backup_p: Path = item["tx_backup"]
-
-                has_staging_content = staging_p.is_dir() and any(
-                    staging_p.rglob("*")
-                )
-                if not target_p.exists() and not has_staging_content:
-                    continue
-
-                item["existed_before"] = target_p.exists()
-                target_p.parent.mkdir(parents=True, exist_ok=True)
-                tx_backup_p.parent.mkdir(parents=True, exist_ok=True)
-
-                # 步骤 1：若现有目标已存在，原子重命名为 .<name>.tx_<uuid>
-                if item["existed_before"]:
-                    _safe_rename(target_p, tx_backup_p)
-
-                # 步骤 2：将 staging 中对应的目录原子重命名为正式目标
-                if staging_p.exists():
-                    _safe_rename(staging_p, target_p)
-
-                item["swapped"] = True
-                swapped_targets.append(item)
-
-            # -------------------- 阶段三：持久化标记文件与清理 --------------------
-            # 提交成功：清理所有 tx_backup 事务临时目录
-            for item in swap_targets:
-                tx_p: Path = item["tx_backup"]
-                if tx_p.exists():
-                    shutil.rmtree(tx_p, ignore_errors=True)
-
-            # 清理 staging 根目录（已全部原子迁出或为空）
-            if staging_dir.exists():
-                shutil.rmtree(staging_dir, ignore_errors=True)
-
-            result_status: dict[str, Any] = {
-                "status": "migrated",
-                "timestamp": datetime.datetime.now().astimezone().isoformat(),
-                "source_path": str(legacy_dir.resolve()),
-                "target_version": get_current_package_version(),
-                "migrated_items": list(WHITELIST_DIRS),
-                "skipped_items": [],
-                "backup_path": backup_dir_path.name if backup_dir_path else "",
-                "file_count": file_count,
-                "total_bytes": total_bytes,
-            }
-            save_migration_status(work_dir, result_status)
-            log.info(
-                "旧数据迁移完成: %d 个文件, 共 %s",
-                file_count,
-                format_bytes(total_bytes),
+            has_staging_content = staging_p.is_dir() and any(
+                staging_p.rglob("*")
             )
-            return result_status
+            if not target_p.exists() and not has_staging_content:
+                continue
 
-        except Exception as swap_err:
-            log.error("交换阶段发生异常，触发两阶段事务逆序回滚: %s", swap_err)
-            # 1. 逆序回滚所有已完成交换的目标
-            for item in reversed(swapped_targets):
-                target_p = item["target"]
-                tx_backup_p = item["tx_backup"]
-                try:
-                    if target_p.exists():
-                        shutil.rmtree(target_p, ignore_errors=True)
-                    if item["existed_before"] and tx_backup_p.exists():
-                        _safe_rename(tx_backup_p, target_p)
-                except Exception as rb_err:
-                    log.critical("回滚目标 %s 失败: %s", item["name"], rb_err)
+            item["existed_before"] = target_p.exists()
+            target_p.parent.mkdir(parents=True, exist_ok=True)
+            tx_backup_p.parent.mkdir(parents=True, exist_ok=True)
 
-            # 2. 处理异常发生时处于半交换中间态的目标
-            for item in swap_targets:
-                target_p = item["target"]
-                tx_backup_p = item["tx_backup"]
-                if (
-                    item["existed_before"]
-                    and tx_backup_p.exists()
-                    and not target_p.exists()
-                ):
-                    with contextlib.suppress(Exception):
-                        _safe_rename(tx_backup_p, target_p)
+            # 步骤 1：若现有目标已存在，原子重命名为 .<name>.tx_<uuid>
+            if item["existed_before"]:
+                _safe_rename(target_p, tx_backup_p)
 
-            # 3. 清理所有残留的 tx_backup 临时目录
-            for item in swap_targets:
-                tx_backup_p = item["tx_backup"]
-                if tx_backup_p.exists():
-                    shutil.rmtree(tx_backup_p, ignore_errors=True)
+            # 步骤 2：将 staging 中对应的目录原子重命名为正式目标
+            if staging_p.exists():
+                _safe_rename(staging_p, target_p)
 
-            # 4. 若 assets 目录为本次新建且为空，彻底清理
-            if not assets_existed_before and assets_dir.exists():
-                with contextlib.suppress(Exception):
-                    if not any(assets_dir.iterdir()):
-                        assets_dir.rmdir()
+            item["swapped"] = True
+            swapped_targets.append(item)
 
-            raise
+        # -------------------- 阶段三：持久化标记文件与清理 --------------------
+        # 提交成功：清理所有 tx_backup 事务临时目录
+        for item in swap_targets:
+            tx_p: Path = item["tx_backup"]
+            if tx_p.exists():
+                _safe_rmtree(tx_p)
 
-    except Exception as e:
-        log.error("数据迁移执行失败，开始回滚原环境: %s", e, exc_info=True)
+        # 清理 staging 根目录（已全部原子迁出或为空）
         if staging_dir.exists():
-            shutil.rmtree(staging_dir, ignore_errors=True)
+            _safe_rmtree(staging_dir)
 
-        # 校验新根层目标是否与迁移前初始状态完全一致
+        result_status: dict[str, Any] = {
+            "status": "migrated",
+            "timestamp": datetime.datetime.now().astimezone().isoformat(),
+            "source_path": str(legacy_dir.resolve()),
+            "target_version": get_current_package_version(),
+            "migrated_items": list(WHITELIST_DIRS),
+            "skipped_items": [],
+            "backup_path": backup_dir_path.name if backup_dir_path else "",
+            "file_count": file_count,
+            "total_bytes": total_bytes,
+        }
+        save_migration_status(work_dir, result_status)
+        log.info(
+            "旧数据迁移完成: %d 个文件, 共 %s",
+            file_count,
+            format_bytes(total_bytes),
+        )
+        return result_status
+
+    except Exception as migration_err:
+        log.error("数据迁移执行失败，开始回滚原环境: %s", migration_err, exc_info=True)
+        rollback_errors: list[Exception] = []
+
+        # 1. 逆序回滚所有已完成交换的目标
+        for item in reversed(swapped_targets):
+            target_p: Path = item["target"]
+            tx_backup_p: Path = item["tx_backup"]
+            try:
+                if target_p.exists():
+                    shutil.rmtree(target_p)
+                if item["existed_before"] and tx_backup_p.exists():
+                    _safe_rename(tx_backup_p, target_p)
+            except Exception as rb_err:
+                log.error("回滚目标 %s 失败: %s", item["name"], rb_err)
+                rollback_errors.append(rb_err)
+
+        # 2. 处理处于半交换中间态的目标（已重命名为 tx_backup 但未完成 target_p 写入）
+        for item in swap_targets:
+            if item.get("swapped"):
+                continue
+            target_p = item["target"]
+            tx_backup_p = item["tx_backup"]
+            if (
+                item.get("existed_before")
+                and tx_backup_p.exists()
+                and not target_p.exists()
+            ):
+                try:
+                    _safe_rename(tx_backup_p, target_p)
+                except Exception as rb_err:
+                    log.error("还原中间态事务备份 %s 失败: %s", item["name"], rb_err)
+                    rollback_errors.append(rb_err)
+
+        # 3. 若 assets 目录为本次新建且为空，清理空目录
+        if not assets_existed_before and assets_dir.exists():
+            with contextlib.suppress(Exception):
+                if not any(assets_dir.iterdir()):
+                    assets_dir.rmdir()
+
+        # 4. 回滚之后【先校验】：比对新根层 3 个目标的逐文件 SHA-256 快照
         post_rollback_snapshot = _snapshot_targets(work_dir)
-        rollback_succeeded = post_rollback_snapshot == initial_targets_snapshot
+        snapshot_matched = (post_rollback_snapshot == initial_targets_snapshot)
+        rollback_succeeded = (len(rollback_errors) == 0 and snapshot_matched)
 
         if rollback_succeeded:
-            # 回滚成功：新根层已 100% 恢复，安全清理本次失败运行创建的持久备份
+            # 回滚成功：新根层已 100% 恢复为迁移前状态，可以安全清理 tx_backup、staging 以及持久备份
+            for item in swap_targets:
+                tx_p = item["tx_backup"]
+                if tx_p.exists():
+                    _safe_rmtree(tx_p)
+
+            if staging_dir and staging_dir.exists():
+                _safe_rmtree(staging_dir)
+
             if backup_dir_path and backup_dir_path.exists():
-                shutil.rmtree(backup_dir_path, ignore_errors=True)
-            log.info("回滚校验通过：目标文件 100% 还原至迁移前状态，已清理临时备份")
+                _safe_rmtree(backup_dir_path)
+
+            log.info("回滚校验通过：目标文件 100% 还原至迁移前状态，已清理临时文件与备份")
+            raise migration_err
         else:
-            # 回滚本身失败（换不回来或校验不一致）：保留备份作为最后的安全网
+            # 回滚失败（换不回来、抛出异常或快照校验不一致）：
+            # 绝对不调用任何 rmtree！保留 backup_dir_path、所有 tx_backup 和 staging 作为安全网
+            preserved_paths: list[str] = []
+            if backup_dir_path and backup_dir_path.exists():
+                preserved_paths.append(str(backup_dir_path.resolve()))
+            for item in swap_targets:
+                tx_p = item["tx_backup"]
+                if tx_p.exists():
+                    preserved_paths.append(str(tx_p.resolve()))
+            if staging_dir and staging_dir.exists():
+                preserved_paths.append(str(staging_dir.resolve()))
+
             log.error(
-                "回滚校验失败：工作区与迁移前状态不一致！已保留安全网备份目录: %s",
-                backup_dir_path.name if backup_dir_path else "未知",
+                "回滚校验失败或回滚过程异常！工作区与迁移前状态不一致。已保留安全网备份目录与事务目录: %s",
+                preserved_paths,
             )
 
-        raise
+            paths_bullet = "\n".join(f"  • {p}" for p in preserved_paths)
+            rb_err_msg = (
+                str(rollback_errors[0])
+                if rollback_errors
+                else "新根层文件状态与迁移前快照不一致"
+            )
+            fail_msg = (
+                f"数据迁移失败且环境自动回滚未完全恢复！\n"
+                f"为防止数据丢失，系统已安全保留以下备份目录与事务临时目录：\n{paths_bullet}\n"
+                f"迁移错误: {migration_err}\n"
+                f"回滚错误: {rb_err_msg}"
+            )
+            raise MigrationRollbackFailedError(
+                fail_msg,
+                preserved_paths=preserved_paths,
+            ) from migration_err

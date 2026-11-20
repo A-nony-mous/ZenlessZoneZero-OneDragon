@@ -191,6 +191,25 @@ class LegacyMigrationCard(SettingCardBase):
                 duration=3000,
                 parent=self.window(),
             )
+        except legacy_migration.MigrationRollbackFailedError as e:
+            log.error("手动导入旧数据失败且回滚未完全恢复", exc_info=True)
+            paths_text = (
+                "\n".join(f"• {p}" for p in e.preserved_paths)
+                if e.preserved_paths
+                else "（无保留目录）"
+            )
+            fail_box = MessageBox(
+                gt("迁移失败且自动回滚未完成"),
+                gt(
+                    f"数据迁移未成功，且环境自动回滚未完全恢复。\n"
+                    f"为保障数据安全，系统已为您保留原始备份与事务数据，绝不丢失：\n\n"
+                    f"{paths_text}\n\n"
+                    f"您可以从上述路径中手动找回配置。"
+                ),
+                self.window(),
+            )
+            fail_box.exec()
+            self.refresh_display()
         except Exception as e:
             log.error("手动导入旧数据失败", exc_info=True)
             fail_box = MessageBox(

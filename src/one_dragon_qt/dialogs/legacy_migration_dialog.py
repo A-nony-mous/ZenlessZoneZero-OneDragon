@@ -141,6 +141,30 @@ class FirstLaunchMigrationDialog(MessageBoxBase):
             )
             success_box.exec()
             self.accept()
+        except legacy_migration.MigrationRollbackFailedError as e:
+            log.error("首启迁移失败且回滚未完全恢复", exc_info=True)
+            paths_text = (
+                "\n".join(f"• {p}" for p in e.preserved_paths)
+                if e.preserved_paths
+                else "（无保留目录）"
+            )
+            fail_box = MessageBox(
+                gt("迁移失败且自动回滚未完成"),
+                gt(
+                    f"数据迁移未成功，且环境自动回滚未完全恢复。\n"
+                    f"为保障数据安全，系统已为您保留原始备份与事务数据，绝不丢失：\n\n"
+                    f"{paths_text}\n\n"
+                    f"您可以从上述路径中手动找回配置。"
+                ),
+                self,
+            )
+            fail_box.exec()
+            self.select_btn.setEnabled(True)
+            self.new_user_btn.setEnabled(True)
+            self.skip_btn.setEnabled(True)
+            self.progress_bar.stop()
+            self.progress_bar.setVisible(False)
+            self.status_label.setText(gt("迁移未完成，数据已保留在安全备份中。"))
         except Exception as e:
             log.error("首启迁移失败", exc_info=True)
             fail_box = MessageBox(
