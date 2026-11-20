@@ -363,7 +363,7 @@ ZenlessZoneZero-OneDragon-Models.zip
 ### 7.1 旧形态数据位置调研
 
 #### 7.1.1 两种旧形态工作目录判定机制与依据
-旧架构存在「源码版」与「集成版（RuntimeLauncher）」两种发行形态。根据旧版核心路径判定函数 `get_work_dir()`（见基线 `c2e3865b:src/one_dragon/utils/os_utils.py:108-120`）：
+旧架构存在「源码版」与「集成版（RuntimeLauncher）」两种发行形态。根据旧版核心路径判定函数 `get_work_dir()`（见基线 `c2e3865b:src/one_dragon/utils/os_utils.py:82-95`）：
 ```python
 def get_work_dir() -> str:
     if _work_dir is not None:
@@ -372,25 +372,26 @@ def get_work_dir() -> str:
         return str(Path(sys.executable).resolve().parent)
     return str(Path(__file__).resolve().parents[3])
 ```
-其中 `run_in_exe()`（`c2e3865b:src/one_dragon/utils/os_utils.py:96-98`）实现为：`return getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')`。
+其中 `run_in_exe()`（`c2e3865b:src/one_dragon/utils/os_utils.py:70-76`）实现为：`return getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')`。
 
 1. **源码版（`OneDragon-Launcher.exe` + `.install/.venv`）**：
    - **打包规范**：见 `git show c2e3865b:deploy/OneDragon-Launcher.spec:6`，入口为 `src/zzz_od/win_exe/launcher.py`，未捆绑应用代码与完整运行时。
    - **工作目录锁定**：启动时 `src/zzz_od/win_exe/launcher.py:17` 调用 `python_launcher.run_python(["zzz_od", "gui", "app"])`。在 `src/one_dragon/devtools/python_launcher.py:82-90` 的 `verify_working_directory()` 中：
      `if getattr(sys, 'frozen', False): cwd = str(Path(sys.executable).resolve().parent)` 并执行 `os.chdir(cwd)`，将当前工作路径显式锁定为可执行文件所在的旧安装根目录 `<old_root>`。
    - **子进程环境与执行**：`python_launcher.py:173` 调用 `uv run --frozen -m zzz_od.gui.app`，其环境配置见 `src/one_dragon/envs/env_config.py:10-12`（`DEFAULT_ENV_PATH = os_utils.get_path_under_work_dir('.install')`，`DEFAULT_UV_PATH = .../.install/uv/uv.exe`）。
-   - **非冻结工作目录推导**：被唤起的 Python 子进程处于非冻结状态（`run_in_exe()` 为 `False`），`get_work_dir()` 执行 `Path(__file__).resolve().parents[3]`。由于此时 `__file__` 位于 `<old_root>/src/one_dragon/utils/os_utils.py`，向上推导 3 层（`utils` -> `one_dragon` -> `src` -> `<old_root>`）精准命中旧安装根目录。
+   - **非冻结工作目录推导**：被唤起的 Python 子进程处于非冻结状态（`run_in_exe()` 为 `False`），`get_work_dir()` 执行 `c2e3865b:src/one_dragon/utils/os_utils.py:95` 的 `Path(__file__).resolve().parents[3]`。由于此时 `__file__` 位于 `<old_root>/src/one_dragon/utils/os_utils.py`，向上推导 3 层（`utils` -> `one_dragon` -> `src` -> `<old_root>`）精准命中旧安装根目录。
 
 2. **集成版（RuntimeLauncher，外置 `src/`）**：
-   - **打包规范与架构**：见 `git show c2e3865b:deploy/OneDragon-RuntimeLauncher.spec:89-98`，采用 PyInstaller 目录模式，运行时二进制落入 `.runtime/`（`contents_directory='.runtime'`），入口为 `src/zzz_od/win_exe/runtime_launcher.py`，挂载 runtime hook `hook_path_inject.py`。
-   - **架构设计出处**：`git show c2e3865b:docs/develop/one_dragon/runtime_launcher.md:23-45`：
+   - **架构设计与目录规范出处**：见 `git show c2e3865b:docs/develop/one_dragon/runtime_launcher.md:23-45`：
      ```
      安装目录/
      ├── OneDragon-RuntimeLauncher.exe    ← 启动入口
      ├── .runtime/                        ← Python 运行时 + 冻结模块
      └── src/                             ← 源代码目录（通过 git 同步）
      ```
-   - **源码注入与工作目录**：`git show c2e3865b:deploy/hook_path_inject.py:15-28` 在启动早期将 `<old_root>/src` 注入 `sys.path`；`src/zzz_od/win_exe/runtime_launcher.py:10-18` 检查 `Path(sys.executable).parent / "src"`。由于集成版本身处于 PyInstaller 冻结环境（`run_in_exe()` 为 `True`），`get_work_dir()` 执行 `Path(sys.executable).resolve().parent`，`sys.executable` 为 `<old_root>/OneDragon-RuntimeLauncher.exe`，其父目录同样精确指向旧安装根目录 `<old_root>`。
+     文档明确规范：可执行文件直接位于安装目录根层，Python 运行时和依赖落入 `.runtime/`，业务源码落入 `src/`。
+   - **源码注入与启动入口**：`git show c2e3865b:deploy/hook_path_inject.py:15-28` 在启动早期将 `<old_root>/src` 注入 `sys.path`；`src/zzz_od/win_exe/runtime_launcher.py:10-18` 明确执行 `_SRC_DIR = Path(sys.executable).parent / "src"` 并在缺失时弹窗提示，反向证明了可执行文件与其同级的 `src/` 均位于同一安装根目录下。
+   - **工作目录冻结分支**：集成版本身处于 PyInstaller 冻结环境（`run_in_exe()` 为 `True`），`get_work_dir()` 直接执行 `c2e3865b:src/one_dragon/utils/os_utils.py:93-94` 的冻结分支：`return str(Path(sys.executable).resolve().parent)`。由于 `sys.executable` 位于 `<old_root>/OneDragon-RuntimeLauncher.exe`，其父目录直接命中旧安装根目录 `<old_root>`。
 
 - **调研结论**：在旧形态下，无论是源码版还是集成版，无论执行进程是否处于冻结模式，运行时的基准工作目录 `get_work_dir()` 均严格等价于旧安装根目录 `<old_root>`。
 
@@ -399,9 +400,8 @@ def get_work_dir() -> str:
 
 | 数据类别 | 旧形态下的确切相对路径 | 代码出处依据（文件:行号） | 迁移建议 | 建议理由与说明 |
 | :--- | :--- | :--- | :--- | :--- |
-| **用户配置文件（根层）** | `<old_root>/config/*.yml`<br>`<old_root>/config/*.json` | `src/one_dragon/base/config/yaml_config.py:44`<br>`src/one_dragon/base/config/json_config.py:40` | **必须迁移** | 记录了用户全部核心业务配置（`env.yml`, `game.yml`, `custom.yml`, `one_dragon.yml` 等），丢失将导致用户需全量重新配置。 |
-| **多实例配置目录** | `<old_root>/config/<instance_idx>/`<br>（如 `config/00/`, `config/01/`） | `src/one_dragon/base/config/yaml_config.py:46`<br>（`sub_dir.append('%02d' % self.instance_idx)`） | **必须迁移** | 存放多账号/多客户端独立配置（如账号凭据、个性化调度），属关键用户数据。 |
-| **个性化素材** | `<old_root>/custom/` 全量内容<br>（典型如 `custom/assets/ui/banner`） | `src/one_dragon_qt/view/setting/setting_custom_interface.py:101`<br>`src/zzz_od/gui/view/home/home_interface.py:382`<br>`.gitignore:57` | **必须迁移** | 用户自定义的主页横幅背景、自定义操作产物及个性化素材，属于用户私有资产。 |
+| **用户配置文件（根层与多实例）** | `<old_root>/config/*.yml`<br>`<old_root>/config/*.json`<br>`<old_root>/config/<instance_idx>/` | `src/one_dragon/base/config/yaml_config.py:60-66`<br>`src/one_dragon/base/config/json_config.py:40-44` | **必须迁移** | `_get_yaml_file_paths()` 在第 60–62 行拼出 `sub_dir = ['config']` 与实例子目录 `sub_dir.append('%02d' % self.instance_idx)`，并在第 66 行调用 `os_utils.get_path_under_work_dir(*sub_dir)` 构造完整路径。包含用户全部游戏账号、调度计划、自定义配置，丢失将导致用户需全量重新配置。 |
+| **个性化素材** | `<old_root>/custom/` 全量内容<br>（典型如 `custom/assets/ui/banner`） | `src/one_dragon_qt/view/setting/setting_custom_interface.py:174`<br>`src/zzz_od/gui/view/home/home_interface.py:871`<br>`.gitignore:57` | **必须迁移** | `setting_custom_interface.py:174` 保存用户自定义主页横幅到 `os_utils.get_path_under_work_dir('custom', 'assets', 'ui', 'banner')`；`home_interface.py:871` 从该路径读取并渲染。属于用户私有素材与个性化产物。 |
 | **已下载 AI 模型** | `<old_root>/assets/models/`<br>（包含 `onnx_ocr/`, `flash_classifier/`, `hollow_zero_event/`, `lost_void_det/` 等） | `src/one_dragon/base/matcher/ocr/onnx_ocr_matcher.py:39`<br>`src/one_dragon/utils/yolo_config_utils.py:9`<br>`src/zzz_od/yolo/flash_classifier.py:48` | **必须迁移** | YOLO 目标检测、OCR 识别等本地模型文件，总计百 MB 以上。迁移可避免老用户重新下载耗时及因 GitHub/网络波动造成的下载失败。 |
 | **历史运行日志** | `<old_root>/.log/`<br>（如 `log.txt`, `one_dragon.log`, `python_launcher_framework.log`） | `src/one_dragon/utils/log_utils.py:145`<br>`src/one_dragon/devtools/python_launcher.py:65` | **不迁移** | 历史调试诊断数据，体积往往庞大且碎片较多；新包首启已由 `bundle_seed.py` 初始化全新的 `.log/` 目录记录新生命周期。 |
 | **第三方插件目录** | `<old_root>/plugins/`<br>（用户手动放置或克隆的第三方插件仓库） | `src/one_dragon/base/operation/application/application_factory_manager.py:7`<br>`src/one_dragon/base/config/plugin_subscription_config.py:3` | **不自动迁移**<br>（设置页提示手动安装） | 第三方插件依赖 Python 源码动态执行，且可能依赖未打包在 Velopack 中的外部库，直接迁移可能引发未捕获的 `ImportError` 崩溃。插件配置已在 `config/` 中保留，用户应在新版启动后通过插件商店重新订阅安装。 |
@@ -413,8 +413,8 @@ def get_work_dir() -> str:
 为了探究系统是否存在全局持久化记录可供新版静默检索，对旧形态全量代码与历史提交进行了严格排查：
 1. **Windows 注册表（Registry）**：
    - 检索命令：`git grep -i -E "winreg|registry|HKEY"`；
-   - 检索分析：代码中除 markdown 文档说明及内部内存字典命名（如 `operation_registry.py`）外，**完全没有任何调用 `winreg` 模块或 Windows API 读写注册表的代码**。
-   - 调研结论：**没有**在注册表中记录安装路径。
+   - 检索分析：代码中唯一一处使用 `winreg` 模块的位置是 `src/zzz_od/operation/enter_game/auto_hdr.py:1,32-42`。该模块读取并修改注册表项 `HKEY_CURRENT_USER\Software\Microsoft\DirectX\UserGpuPreferences` 下的游戏执行路径项（写入 `AutoHDREnable=2096;`），用于自动开关**绝区零游戏客户端的 Windows AutoHDR 画面设置**，纯属游戏自身的图像功能辅助，与 OneDragon 自身的安装路径毫无关联。除该业务模块外，全量代码中**完全没有任何向注册表读写 OneDragon 应用安装路径的代码**。
+   - 调研结论：**没有**在注册表中持久化安装路径。
 2. **系统应用数据目录（%APPDATA% / %LOCALAPPDATA%）**：
    - 检索命令：`git grep -i -E "APPDATA|LOCALAPPDATA"`；
    - 检索分析：仅在开发调试辅助脚本 `tools/mcp/create_mcp_server_startup_shortcut.ps1:4` 和 `tools/mcp/daemon/create_startup_shortcut.ps1:4` 中作为测试服务器自启辅助使用；主业务、安装器与旧启动器**完全没有在 `%APPDATA%` 或 `%LOCALAPPDATA%` 读写过应用安装路径**。
@@ -424,7 +424,7 @@ def get_work_dir() -> str:
    - 检索分析：旧安装器 `src/zzz_od/gui/zzz_installer.py` 和 `src/one_dragon_qt/app/directory_picker.py` 在安装时仅通过 `QFileDialog` 获取目标目录并解压文件，**没有生成任何桌面快捷方式或开始菜单项**，亦无任何记录目标安装路径供程序反查的机制。
    - 调研结论：**没有**在快捷方式中记录安装路径。
 
-- **持久化调研结论**：旧版本属于完全的「纯绿色本地目录运行」模式，**没有任何全局持久化位置记录过安装路径**。
+- **持久化调研结论**：旧版本属于完全的「纯绿色本地目录运行」模式，**没有任何全局持久化位置记录过应用安装路径**。
 
 #### 7.1.4 Velopack 新安装路径与旧安装根的关系（为什么新目录必然拿不到旧数据）
 1. **Velopack 物理安装位置**：
@@ -474,8 +474,8 @@ def get_work_dir() -> str:
 
 ```
 旧目录 <old_root>/
-├── config/                  ───[白名单 迁移]───> 新根层 config/ (YAML 逆向缺键补齐)
-├── custom/                  ───[白名单 迁移]───> 新根层 custom/ (整目录覆盖拷贝)
+├── config/                  ───[白名单 迁移]───> 新根层 config/ (YAML 逆向缺键补齐与冲突分流)
+├── custom/                  ───[白名单 迁移]───> 新根层 custom/ (按新根层修改状态安全合并)
 ├── assets/models/           ───[白名单 迁移]───> 新根层 assets/models/ (增量合并)
 ├── assets/template/         ───[黑名单 丢弃]───> 严禁搬运！强制使用新包内置资源
 ├── assets/ui, text, ...     ───[黑名单 丢弃]───> 严禁搬运！强制使用新包内置资源
@@ -490,31 +490,53 @@ def get_work_dir() -> str:
 
 ---
 
-### 7.4 冲突处理策略
+### 7.4 冲突处理策略与新版修改保护机制
 
-新包在首启执行迁移前，main 入口通常已运行过 `bundle_seed.py::ensure_work_dir_ready()`，在 `<work_dir>/config/` 下播种了默认的空白配置文件；同时老用户也可能在新版中做过部分改动。必须制定清晰的冲突解决细则。
+新包首启在 main 入口已由 `bundle_seed.py` 播种了默认空白模板。更为关键的是，**用户可能在首启时选择了「跳过/以后再说」，在新版中已经正常使用并修改了部分配置，数日后才在设置页中重新发起迁移**。若粗暴以旧文件覆盖新根层，将直接抹除用户在新版中的改动。针对该漏洞，设计严密的分流与冲突保护机制：
 
-#### 7.4.1 核心原则：老用户数据绝对优先，新版缺键逆向补齐
+#### 7.4.1 如何判定「新根层已被用户修改」
+设计检测契约 `has_user_modified_new_work_dir() -> tuple[bool, list[str]]`，在执行迁移前对新根层进行状态扫描：
+1. **模板哈希比对**：比对新根层 `config/` 中的基础配置文件（`env.yml`, `project.yml`, `custom.yml` 等）与包内只读模板（`resources/config/...`）的内容哈希。若哈希不一致，表明用户修改过配置。
+2. **业务有效字段脱离默认值**：检查关键配置项（如 `env.yml` 中的 `game_path` 非空、代理设置已填入、自定义分辨率等），若脱离了初始默认值，判定已产生用户修改。
+3. **私有配置产生**：检查新根层是否存在只有用户交互才会生成的文件，如 `config/game_account.yml`、`config/one_dragon.yml`，或多实例子目录 `config/00/` 等。
+4. **自定义素材存在**：检查 `custom/assets/ui/banner` 是否存在非空的自定义背景文件。
+- 若上述任一项命中，函数返回 `(True, modified_files_list)`，系统进入「新版已修改场景」分支；若全未命中（仅有全新播种的空模板），系统进入「纯净首启场景」分支。
+
+#### 7.4.2 场景 A：纯净首启场景（新根层未被修改）
+此场景新根层仅有包内默认模板，无任何用户资产：
 1. **`config/*.yml` / `config/*.yaml` 配置文件**：
-   - **融合逻辑**：以**旧目录中的配置文件**为基础数据源（旧配置记录了用户真实的账号、游戏安装路径、自定义按键等核心数据）。
-   - **逆向缺键补齐**：与新包对应的模板配置比对，复用 `bundle_seed.py::_merge_yaml_missing_keys` 机制：
-     - 用户旧配置中已存在的键，其值保持完全不变；
-     - 若新版本引入了旧配置中不存在的全新顶层键，提取新键及其默认值，追加至旧配置内容末尾，并附带注释 `# 以下为版本升级自动补齐的新增默认配置项`；
-     - 将最终融合生成的配置写入新目录。
-   - **异常容错**：若旧文件损坏或无法进行 yaml safe_load 解析，记录 warning 日志，保留新包现有配置文件不予覆盖，并在最终结果中报告该文件跳过，避免因单个损坏文件阻塞整体迁移。
+   - 以旧目录中的配置文件为基础数据源（旧配置记录了用户真实的账号、游戏安装路径、自定义按键等核心数据）；
+   - 与新包对应的模板配置比对，复用 `bundle_seed.py::_merge_yaml_missing_keys` 机制：保留老用户已有的全部键值，仅将新版本引入的全新顶层键（及其默认值和注释）追加至旧配置内容末尾；
+   - 若旧配置损坏或解析失败：打 warning 日志，保留新包模板配置，并在报告中标记该文件跳过。
 2. **多实例配置目录 `config/<instance_idx>/`**：
-   - 新包首启默认只包含主配置，多实例目录属于老用户的私有数据。直接整目录迁移，若多实例内部包含 `.yml` 文件，同理执行上述缺键补齐。
-3. **`config/` 下的非 YAML 文件（`.json`, `.txt` 等）**：
-   - 若新根层不存在：直接复制；
-   - 若新根层已存在且内容不同：将新根层文件备份为 `.bak`，以老用户旧文件为准进行覆盖。
-4. **`custom/` 用户自定义素材**：
-   - 旧目录文件直接复制并覆盖新根层的同名文件（老用户的主页背景或产物直接生效）。
-5. **`assets/models/` AI 模型**：
-   - 采用增量复制策略：检查新根层 `assets/models/<category>/<model_name>/`，若新根层中该模型目录已存在且关键 onnx 文件完整，则跳过以节约 I/O；若新根层缺失，则整目录无损拷入。
+   - 整目录迁移，其中 `.yml` 文件按上述缺键规则补齐。
+3. **`config/*.json` 与 `custom/`**：
+   - 直接无损覆盖新根层的空目录或空白模板。
+4. **`assets/models/` AI 模型**：
+   - 增量合并，新根层缺失的模型整目录拷入。
+
+#### 7.4.3 场景 B：延迟/设置页迁移场景（新根层已被用户修改）
+用户已在新版中配置了新数据，此时保护用户在新版中的修改是第一优先级：
+1. **强制前置持久快照备份（安全兜底防线）**：
+   - 在进行任何文件写入或合并前，必须先将新根层当前的 `config/` 与 `custom/` 完整备份至显式目录 `<work_dir>/config_backup_<YYYYMMDD_HHMMSS>/`（见 7.5 节备份生命周期说明），确保用户在新版中的任何修改 100% 具备回退快照，绝无静默丢失可能。
+2. **配置冲突融合细则**：
+   - **键级细粒度合并（智能继承）**：
+     - 若某个配置键在旧版中被修改过，但在新版中仍为初始默认值：自动继承旧版的值；
+     - 若某个配置键在新版中已被用户明确修改过（脱离默认值），且旧版中也有修改（发生显式冲突）：**默认保留新版中的用户修改**（新版为用户最新行为），并在完成提示中列出保留新版修改的字段；
+     - 老版本独有的配置项（如旧版历史多实例子目录 `config/01/`，而新版仅有 `config/00/`）：无损合入新根层。
+   - **交互策略选择弹窗（当存在核心冲突时）**：
+     检测到存在核心业务键冲突（如两边的游戏路径或主账号不同），弹窗向用户展示差异清单并提供明确选项：
+     - 【保留新版修改，补齐旧版多实例与模型（推荐）】：以新版当前修改为主，旧版仅补充新版缺失的配置项、多实例和模型；
+     - 【以旧版配置全量覆盖（完全还原老状态）】：用旧版覆盖新版，新版现状已存档在 `config_backup_<timestamp>/`；
+     - 【取消迁移】：退出流程，不发生任何改动。
+3. **`config/*.json` 与 `custom/` 冲突规则**：
+   - 若新根层已有用户自定义 banner 或自定义 json 文件且哈希与旧版不同：**绝不直接覆盖**，将其保留在新根层，并将旧版同名文件作为 `banner.legacy_<timestamp>` 另存，由用户在设置页预览选择。
+4. **`assets/models/` 模型**：
+   - 维持增量合并：新根层已有的模型文件保留，仅补齐新根层缺失的模型目录。
 
 ---
 
-### 7.5 原子性和回退机制
+### 7.5 原子性和回退机制（备份目录全生命周期规范）
 
 迁移过程涉及大量磁盘 I/O（`assets/models` 可能达数百 MB）。为满足硬约束 4（中途失败不留半个目录）与硬约束 5（旧目录一律只读），设计如下原子操作契约：
 
@@ -544,18 +566,30 @@ def get_work_dir() -> str:
 2. **第一阶段：准备与合并（全部在 Staging 中完成）**：
    - 将旧目录的 `custom/` 复制到 `.migration_staging_<uuid>/custom/`；
    - 将旧目录的 `assets/models/` 增量复制到 `.migration_staging_<uuid>/assets/models/`；
-   - 读取旧目录与新根层的 `config/`，在内存完成 7.4 节规定的合并后，将完整文件结构写入 `.migration_staging_<uuid>/config/`。
+   - 读取旧目录与新根层的 `config/`，在内存完成 7.4 节规定的合并策略后，将完整文件结构写入 `.migration_staging_<uuid>/config/`。
 3. **第二阶段：完整性自检**：
    比对 staging 中生成的文件列表与源清单，确认关键配置文件大小与结构有效。
 4. **第三阶段：原子提包（Stage-in）**：
    - 对于新创建的目录（`custom` 与 `assets/models` 中的新模型）：直接通过 `Path.rename()` 原子移入目标路径。
-   - 对于存在冲突的 `config/` 目录：
+   - 对于 `config/` 目录：
      1. 将当前新根层的 `<work_dir>/config` 临时重命名为 `<work_dir>/.config.backup_<uuid>`；
      2. 将 `.migration_staging_<uuid>/config` 原子重命名为 `<work_dir>/config`；
-     3. 成功后安全清理 `.config.backup_<uuid>`；
-     4. 若重命名发生任何异常，立即将 `.config.backup_<uuid>` 还原回 `<work_dir>/config`。
+     3. 若重命名发生任何异常，立即将 `.config.backup_<uuid>` 还原回 `<work_dir>/config`。
 
-#### 7.5.3 Windows 文件占用与锁处理
+#### 7.5.3 备份目录去向与全生命周期规范（彻底杜绝残留与误删）
+在两阶段重命名中产生的备份目录，严格遵循以下契约：
+1. **目录命名与位置**：
+   - **事务临时备份**：`<work_dir>/.config.backup_<uuid>`（以点开头的隐藏目录，位于新工作根目录下，专用于重命名事务的原子回滚缓冲）；
+   - **用户持久快照**：`<work_dir>/config_backup_<YYYYMMDD_HHMMSS>/`（显式命名的可见目录，位于新工作根目录下，记录新版已被修改时的历史配置快照）。
+2. **生命周期与清理规则**：
+   - **迁移失败回滚时**：
+     无论新根层此前处于何种状态，一旦迁移报错，事务机制立即将 `.config.backup_<uuid>` 还原重命名为 `<work_dir>/config`，随后彻底递归删除 `.migration_staging_<uuid>`。**新根层 100% 恢复为迁移前原状，不留下任何 `.backup` 或 `.staging` 残留目录**。
+   - **迁移成功完成时**：
+     - **若新根层此前未被修改（纯净首启场景）**：由于新配置已完整继承旧配置并补齐了包内缺键，且新版原始模板在包内 `resources/config/` 中永久存有只读备份，此临时过渡目录 `.config.backup_<uuid>` 在事务提交成功后**立即由后台清理删除**，不留让用户困惑的垃圾文件；
+     - **若新根层此前已被用户修改过（延迟迁移场景）**：**绝对禁止悄悄删除该备份目录！** 系统将临时备份 `.config.backup_<uuid>` 重命名为显式用户持久快照 `<work_dir>/config_backup_<YYYYMMDD_HHMMSS>/`，并在迁移完成弹窗中向用户清晰呈现：`「检测到您此前在新版本中进行过配置，原有配置已为您安全归档至 config_backup_<timestamp> 目录中，随时可供查阅与还原。」`；
+     - **持久快照保留多久**：持久快照作为用户的实际数据资产，由用户自主决定保留或手动删除，应用程序绝不擅自清理该显式目录。
+
+#### 7.5.4 Windows 文件占用与锁处理
 1. **短延时重试机制**：
    Windows 下防病毒软件（如 Windows Defender）或文件索引器可能对新建/复制的文件进行短时占用锁定，导致 `rename()` 或 `unlink()` 抛出 `PermissionError` (WinError 32 / WinError 5)。对关键重命名操作引入带回退的指数退避重试（重试 3 次，间隔 200ms）。
 2. **回退与清理保证**：
@@ -563,7 +597,7 @@ def get_work_dir() -> str:
    - 一旦重试后仍抛出 `PermissionError` 或发生任何异常，立即触发回滚：还原 `.config.backup_<uuid>`，并递归删除 `.migration_staging_<uuid>`。
    - `finally` 块确保任何中途退出均不留下半个临时目录，保证工作目录恢复为迁移前纯净状态。
 
-#### 7.5.4 旧目录零写入物理保证（硬约束 5）
+#### 7.5.5 旧目录零写入物理保证（硬约束 5）
 - 迁移模块的所有文件读写代码中，**严禁对旧目录路径及其子项调用任何包含写入意图的 API**（如 `open(..., 'w')`, `os.remove()`, `os.rename()`, `shutil.rmtree()`, `mkdir()` 等）。
 - 仅允许调用 `open(..., 'r')`, `read_text()`, `shutil.copy2()`, `os.walk()`。测试用例中将对旧目录迁移前后的逐文件 SHA-256 哈希进行比对验收。
 
@@ -586,6 +620,7 @@ def get_work_dir() -> str:
     "assets/models"
   ],
   "skipped_items": [],
+  "backup_path": "config_backup_20261120_163000",
   "file_count": 48,
   "total_bytes": 167772160
 }
@@ -603,6 +638,7 @@ def get_work_dir() -> str:
 用户若在首启时不小心点击了跳过，或之后想更换旧目录重新迁移，无需手动修改标记文件：
 - 在「系统设置 - 数据管理」（`SettingInterface`）中新增专属设置卡片：【旧版本数据迁移】。
 - 界面展示当前状态（如「上次迁移：已于 2026-11-20 完成」或「未迁移」）；
+- 若存在历史备份，提供【打开配置备份目录】按钮；
 - 提供按钮【从旧版本重新导入数据】，点击后弹出目录选择器，直接调用迁移核心模块重新执行。
 
 ---
@@ -647,9 +683,24 @@ def get_work_dir() -> str:
    - **按钮布局**：
      - 【选择旧版本目录】（PrimaryPushButton）
      - 【直接开始（全新使用）】（PushButton）
-3. **迁移中进度反馈**：
+3. **延迟迁移检测到新版已被修改时的冲突提示框（场景 B）**：
+   - **标题**：`检测到新版本已有配置`
+   - **正文**：
+     ```text
+     您此前在新版本中已产生修改。为保障数据安全，系统已将新版现有配置备份至：
+     {backup_dir}
+
+     请选择迁移策略：
+     • 保留新版修改：以新版配置为主，旧版仅补充新版缺失的配置项、多实例和模型
+     • 还原旧版配置：完全采用旧版配置覆盖，新版改动保留在备份目录中
+     ```
+   - **按钮布局**：
+     - 【保留新版修改（推荐）】（PrimaryPushButton）
+     - 【还原旧版配置】（PushButton）
+     - 【取消】（PushButton）
+4. **迁移中进度反馈**：
    - 弹窗切换为进度视图，显示 `IndeterminateProgressBar`，提示文案：`正在迁移数据，请稍候...（已复制 {count} 个文件）`。
-4. **失败提示**：
+5. **失败提示**：
    - **标题**：`迁移未完成`
    - **正文**：
      ```text
@@ -672,7 +723,8 @@ def get_work_dir() -> str:
 | **TC-MIG-02** | **首启探测与迁移全流程正常路径** | 1. 将新包解压至空目录；<br>2. 预置含真实配置与模型的旧目录；<br>3. 启动新包，弹窗点击【立即迁移】。 | 1. 弹出确认框并展示进度；<br>2. 新根层 `config/`, `custom/`, `assets/models/` 完备无损；<br>3. 生成 `.legacy_migration_status.json`，`status` 为 `migrated`；<br>4. 主窗口以老用户配置正常启动。 |
 | **TC-MIG-03** | **重入与跳过决策幂等性** | 1. 首启弹窗中点击【跳过】；<br>2. 关闭应用并重新启动；<br>3. 观察启动行为与状态。 | 1. 第二次启动直接进入主界面，不再弹出迁移窗口；<br>2. 根层配置保持默认播种值；<br>3. 进入设置页，【旧版本数据迁移】卡片可用。 |
 | **TC-MIG-04** | **目录合法性校验与非法输入拦截** | 1. 启动弹窗点击【选择其他目录】；<br>2. 分别选择空文件夹、系统目录 `C:\Windows` 以及新包自身的当前运行目录。 | 1. 拦截并提示「未检测到旧版本核心特征文件」；<br>2. 不生成任何 staging 目录与文件；<br>3. 不破坏当前环境。 |
-| **TC-MIG-05** | **配置逆向缺键补齐与冲突处理** | 1. 在旧目录 `env.yml` 中配置自定义 `is_debug: true`；<br>2. 新包内置模板包含新增顶层字段 `new_feature_flag: default_value`；<br>3. 执行迁移。 | 1. 迁移后的 `env.yml` 中 `is_debug` 依然为 `true`（用户数据未丢失）；<br>2. 文件末尾追加了 `new_feature_flag` 及其默认值与注释；<br>3. 多实例子目录 `config/00/` 无损到位。 |
-| **TC-MIG-06** | **只读资源严格隔离断言（硬约束 3 验收）** | 1. 在旧目录的 `assets/template/` 中故意放入一个脏文件 `corrupted_template.png`；<br>2. 执行迁移。 | 1. 新根层的 `assets/template/` 仅包含新包播种的标准资源；<br>2. 脏文件 `corrupted_template.png` **绝未**出现在新根层中。 |
-| **TC-MIG-07** | **异常中断原子回滚与零残留（硬约束 4 验收）** | 1. 模拟迁移复制阶段抛出模拟异常（或人为在 staging 阶段加文件锁制造 `PermissionError`）；<br>2. 捕获失败流程。 | 1. 弹窗提示迁移失败原因；<br>2. 新根层的 `.migration_staging_*` 与备份目录被彻底清理；<br>3. 新根层恢复至迁移前状态，不残留半个目录；<br>4. 下次启动程序可正常运行。 |
-| **TC-MIG-08** | **磁盘空间不足预检拦截** | 1. 构造目标驱动器剩余空间小于迁移数据总体积的场景；<br>2. 点击迁移。 | 1. 在进行任何实际拷贝前立即拦截；<br>2. 弹出磁盘空间不足警告；<br>3. 零 I/O 写入。 |
+| **TC-MIG-05** | **纯净首启配置逆向缺键补齐** | 1. 在旧目录 `env.yml` 中配置自定义 `is_debug: true`；<br>2. 新包内置模板包含新增顶层字段 `new_feature_flag: default_value`；<br>3. 执行迁移。 | 1. 迁移后的 `env.yml` 中 `is_debug` 依然为 `true`（用户数据未丢失）；<br>2. 文件末尾追加了 `new_feature_flag` 及其默认值与注释；<br>3. 多实例子目录 `config/00/` 无损到位。 |
+| **TC-MIG-06** | **延迟迁移新版改动保护与备份断言（新版已修改场景）** | 1. 新包首启点击跳过，并在新版设置中修改 `env.yml` 的 `game_path` 为 `D:\NewGamePath`；<br>2. 从设置页发起迁移，旧版为 `D:\OldGamePath`；<br>3. 执行迁移。 | 1. 新根层自动生成持久快照 `config_backup_<timestamp>/`，包含修改前的 `game_path: D:\NewGamePath`；<br>2. 弹窗提示冲突策略，若选保留新版则 `game_path` 维持新版，旧版模型与缺失多实例补入；<br>3. 用户新版修改绝无静默丢失。 |
+| **TC-MIG-07** | **只读资源严格隔离断言（硬约束 3 验收）** | 1. 在旧目录的 `assets/template/` 中故意放入一个脏文件 `corrupted_template.png`；<br>2. 执行迁移。 | 1. 新根层的 `assets/template/` 仅包含新包播种的标准资源；<br>2. 脏文件 `corrupted_template.png` **绝未**出现在新根层中。 |
+| **TC-MIG-08** | **异常中断原子回滚与备份目录清理（硬约束 4 验收）** | 1. 模拟迁移复制阶段抛出模拟异常（或人为在 staging 阶段加文件锁制造 `PermissionError`）；<br>2. 捕获失败流程。 | 1. 弹窗提示迁移失败原因；<br>2. 新根层的 `.migration_staging_*` 与临时备份目录 `.config.backup_*` 被彻底清理；<br>3. 新根层恢复至迁移前状态，不残留半个目录；<br>4. 下次启动程序可正常运行。 |
+| **TC-MIG-09** | **磁盘空间不足预检拦截** | 1. 构造目标驱动器剩余空间小于迁移数据总体积的场景；<br>2. 点击迁移。 | 1. 在进行任何实际拷贝前立即拦截；<br>2. 弹出磁盘空间不足警告；<br>3. 零 I/O 写入。 |
