@@ -6,7 +6,7 @@
 - 适用环境：Windows 10 / 11 x64，已安装 Git、uv、.NET SDK（用于安装 `vpk`）
 - 状态：**未执行**。本清单由 Tester 整理，供人类在 Windows 真机上逐条执行并记录结果；arm-1 是 aarch64 Linux，无法代替本清单的任一条。
 
-> 说明：清单里所有命令都从**仓库根目录**开始执行（即 `ZenlessZoneZero-OneDragon\`，下文用 `<仓库根目录>` 指代）。每条都有明确的期望结果和断言命令，不要只看一眼就判通过。执行完把「实际结果」填进第 11 节记录表。
+> 说明：清单里所有命令都从**仓库根目录**开始执行（即 `ZenlessZoneZero-OneDragon\`，下文用 `<仓库根目录>` 指代）。每条都有明确的期望结果和断言命令，不要只看一眼就判通过。执行完把「实际结果」填进第 12 节记录表。
 
 ## 0. 执行前准备
 
@@ -196,7 +196,7 @@ Get-ChildItem $save1 | Select-Object Name, Length
 Get-FileHash (Get-ChildItem $save1 -Filter "*Setup.exe").FullName -Algorithm SHA256 | Select-Object Hash, Path
 ```
 
-期望：`$save1` 下有 `Setup.exe` 与 `Portable.zip` 各一份（名称以实际 `vpk` 输出为准）。把 `Setup.exe` 的 SHA256 记进第 11 节：第 6.1 节靠它区分两个版本的安装器。
+期望：`$save1` 下有 `Setup.exe` 与 `Portable.zip` 各一份（名称以实际 `vpk` 输出为准）。把 `Setup.exe` 的 SHA256 记进第 12 节：第 6.1 节靠它区分两个版本的安装器。
 
 ## 3. 用同一份代码打第 2 个版本包 `0.1.0-beta.2`（对应验收标准 1、3）
 
@@ -410,7 +410,7 @@ Write-Host 'nupkg 内所有 OneDragon.exe / Update.exe 签名均为 Valid'
 
    期望：四个 `->` 结尾都是 `一致`，最后打印 `PASS`，退出码 0。
 
-   参考值（**只用于排查偏差，不作为断言**）：按本单基线 `c2e3865b` 用 `git ls-tree -r c2e3865b --name-only assets/<tree>` 数出来是 template **1948** / ui **5** / text **8** / game_data **159**。如果某一类的根层数量少于包内数量，说明播种没做完或被中断（回看 `.bundle_seed_status.json` 与 `.log\`）；如果根层多于包内，说明根层有旧版本残留没被整体覆盖（S4 回归），把实际数字记进第 11 节记录表。
+   参考值（**只用于排查偏差，不作为断言**）：按本单基线 `c2e3865b` 用 `git ls-tree -r c2e3865b --name-only assets/<tree>` 数出来是 template **1948** / ui **5** / text **8** / game_data **159**。如果某一类的根层数量少于包内数量，说明播种没做完或被中断（回看 `.bundle_seed_status.json` 与 `.log\`）；如果根层多于包内，说明根层有旧版本残留没被整体覆盖（S4 回归），把实际数字记进第 12 节记录表。
 
 5. 断言版本标记是**纯版本号**（D5：`sq.version` 是 nuspec XML，标记里不能是 XML 全文）：
 
@@ -431,7 +431,7 @@ Write-Host 'nupkg 内所有 OneDragon.exe / Update.exe 签名均为 Valid'
 
    期望：最后打印 `PASS`，退出码 0。`.bundle_seed_status.json` 的四个键（`template` / `ui` / `text` / `game_data`）值都与 `$marker` 相同，同样不含 `<`。
 
-   > 老用户迁移：升级到本版本前，两个文件里存的是 nuspec XML 全文。由于与纯版本号不相等，**第一次启动会全量重新播种一次**，之后两个文件被改写成纯版本号，不会再重复播种。升级后如果发现每次启动都在重播 46MB 资源，说明迁移逻辑回归了，记进第 11 节记录表。
+   > 老用户迁移：升级到本版本前，两个文件里存的是 nuspec XML 全文。由于与纯版本号不相等，**第一次启动会全量重新播种一次**，之后两个文件被改写成纯版本号，不会再重复播种。升级后如果发现每次启动都在重播 46MB 资源，说明迁移逻辑回归了，记进第 12 节记录表。
 
 6. 关闭应用：
 
@@ -645,7 +645,7 @@ $lock.Close(); $lock.Dispose()
 
 > **口径（人类已定，不再讨论替代方案）**：离线更新没有独立入口，也**不新增任何导入本地更新包的入口**；同样不把「重新解压 `Portable.zip` 覆盖已有目录」当作更新方式。离线路径就是**像第一次安装一样运行新版 `Setup.exe`**，验证点是「根层用户数据全部保留、`current\` 被整体替换、版本标记前进」。
 >
-> **本节目前未实测**。这是人类明确要求补测的一项：Windows 真机项，arm-1 是 aarch64 Linux，没有任何一条能代替执行。请在 Windows 上按下面 4 步跑完，把实际结果填进第 11 节记录表的 6.1–6.7 行；跑不了的写「未执行 + 原因」，**不要**根据代码推断为通过。
+> **本节目前未实测**。这是人类明确要求补测的一项：Windows 真机项，arm-1 是 aarch64 Linux，没有任何一条能代替执行。请在 Windows 上按下面 4 步跑完，把实际结果填进第 12 节记录表的 6.1–6.7 行；跑不了的写「未执行 + 原因」，**不要**根据代码推断为通过。
 >
 > 本节所有命令请放在**同一个 PowerShell 会话**里按顺序执行，`$installRoot`、`$modelsManifest`、`$marker` 等变量跨步骤复用。`<仓库根目录>` 按实际路径替换。
 
@@ -687,7 +687,7 @@ $p1 = Start-Process -FilePath $setup1 -Wait -PassThru
 if ($p1.ExitCode -ne 0) { Write-Host 'FAIL: beta.1 安装器退出码非 0'; exit 1 }
 ```
 
-期望：退出码 0。观察并记录安装器的实际行为（第 11 节 6.1 行备注）：是否弹界面、是否有目录选择页、是否需要点确认、完成后是否自动拉起应用。
+期望：退出码 0。观察并记录安装器的实际行为（第 12 节 6.1 行备注）：是否弹界面、是否有目录选择页、是否需要点确认、完成后是否自动拉起应用。
 
 #### 1.3 记录安装根路径
 
@@ -735,7 +735,7 @@ Test-Path (Join-Path $installRoot 'current\sq.version')                # 期望 
 (Get-ChildItem $installRoot -Directory | Select-Object -ExpandProperty Name) -join ', '
 ```
 
-期望：四行 `True`；根层能看到 `current`、`config`、`assets`、`custom`、`.log`（首启之前的全新安装可能还没有 `config` / `assets`，下一步启动后会补上）。把 `安装根` 的原值记进第 11 节——覆盖安装后必须还是同一个路径。
+期望：四行 `True`；根层能看到 `current`、`config`、`assets`、`custom`、`.log`（首启之前的全新安装可能还没有 `config` / `assets`，下一步启动后会补上）。把 `安装根` 的原值记进第 12 节——覆盖安装后必须还是同一个路径。
 
 #### 1.4 启动一次完成首启播种
 
@@ -788,7 +788,7 @@ if ($modelsExist) {
 }
 ```
 
-期望：要么打印 `True` 与文件数，要么打印 `False` 加提示。两种都要把结论记进第 11 节 6.4 行。
+期望：要么打印 `True` 与文件数，要么打印 `False` 加提示。两种都要把结论记进第 12 节 6.4 行。
 
 #### 1.7 记录 beta.1 的 `current\` 特征，并放一个 beta.1 独有的文件
 
@@ -840,14 +840,14 @@ Write-Host 'PASS: 覆盖安装前没有 OneDragon.exe / Update.exe 在运行'
 | 要不要人工确认 | 交互式运行会弹安装进度窗口，按界面提示走完；无人值守可用 `--silent` | |
 | 完成后会不会自动启动应用 | 取决于安装器完成页的勾选。自动拉起也罢，本节都要求先确认播种完成（见 4.4）再做 4.5–4.7 的断言 | |
 
-如果本次实测发现安装器**会**询问目录或接受目录参数（例如 `--installto`），就照它给的选项装到 `$installRoot`，并把参数原文与界面截图记进第 11 节；不要为了贴合本文的预期去改安装位置。
+如果本次实测发现安装器**会**询问目录或接受目录参数（例如 `--installto`），就照它给的选项装到 `$installRoot`，并把参数原文与界面截图记进第 12 节；不要为了贴合本文的预期去改安装位置。
 
 **如果它总是装到默认位置怎么办：**
 
 1. **不要**手工把 beta.1 的安装目录搬 / 复制到默认位置。Velopack 靠安装时登记的信息判断「是否已安装」，手工搬移会让它认不出已有安装，退化成全新安装，那测的就不是「覆盖」了。
 2. 正确做法是让前置安装也发生在默认位置：1.2 步本来就是用 beta.1 的 `Setup.exe` 装的，安装器默认去的地方就是 beta.1 的安装根，beta.2 自然覆盖同一目录。这也是为什么 1.2 步不让你拿 `Portable.zip` 解压目录当安装根。
 3. 如果 beta.1 之前只以 Portable 解压形式存在于 `C:\TestOneDragon` 这类目录，那个目录不在本节测试范围内（`Setup.exe` 不会去覆盖解压目录）：按 1.2 节用 `Setup.exe` 重装一次 beta.1 再测。
-4. 万一装出两个目录（beta.1 与 beta.2 并存），直接判失败，把两个目录路径都记进第 11 节——这不是符合预期的覆盖行为。
+4. 万一装出两个目录（beta.1 与 beta.2 并存），直接判失败，把两个目录路径都记进第 12 节——这不是符合预期的覆盖行为。
 
 #### 3.2 执行覆盖安装
 
@@ -997,7 +997,7 @@ if (-not $ok) { Write-Host 'FAIL: 覆盖安装后至少一类只读资源的文�
 Write-Host 'PASS: 四类只读资源文件数与包内逐一相等'
 ```
 
-期望：四行都以 `一致` 结尾，最后打印 `PASS`，退出码 0。根层少于包内 → 播种没跑完；根层多于包内 → 新旧文件混合，都是失败，把数字记进第 11 节。
+期望：四行都以 `一致` 结尾，最后打印 `PASS`，退出码 0。根层少于包内 → 播种没跑完；根层多于包内 → 新旧文件混合，都是失败，把数字记进第 12 节。
 
 #### 4.7 启动后只有 1 个 `current\OneDragon.exe` 进程
 
@@ -1020,7 +1020,7 @@ Write-Host 'PASS: 只剩一个 current\OneDragon.exe'
 Get-Process OneDragon -ErrorAction SilentlyContinue | Stop-Process -Force
 ```
 
-**本节通过标准**：4.1–4.7 全部 `PASS`，退出码均为 0；且第 11 节 6.1–6.7 行填了实际结果。任何一条 `FAIL` 都算离线覆盖安装不成立，原样贴输出回 Issue，不要靠改断言让它变绿。
+**本节通过标准**：4.1–4.7 全部 `PASS`，退出码均为 0；且第 12 节 6.1–6.7 行填了实际结果。任何一条 `FAIL` 都算离线覆盖安装不成立，原样贴输出回 Issue，不要靠改断言让它变绿。
 
 ## 7. 完整日志不再出现 Git 仓库报错（对应验收标准 4）
 
@@ -1105,7 +1105,414 @@ Get-Process OneDragon -ErrorAction SilentlyContinue | Stop-Process -Force
 
 3. 打开任务管理器 →「详细信息」，人工确认没有残留的 `OneDragon.exe`、`Update.exe` 和孤儿 Python 进程。
 
-## 10. 未验证项（本次不覆盖，交付时需人类单独确认）
+## 10. 旧数据迁移（B 阶段新增，父单「迁移方案确认」）
+
+本节对应设计文档第 7 节，口径以人类 2026-11-20 的确认（父单评论「迁移方案确认：5 项按下面执行」）为准，与第 7 节原文冲突的地方按本节执行：
+
+- 探测只做**方案 A**：首启弹窗手动选目录，**不扫描驱动器、不读快捷方式**；
+- 弹窗只在**纯首启**出现（新根层只有播种出来的默认配置，且没有迁移标记）；升级后的日常启动不弹；
+- 两个跳过项：**「我是新用户」写 `dismissed`、「以后再说」写 `skipped`**，两者之后都**不再主动弹窗、不挂横幅**，只保留设置页入口；
+- 延迟迁移**默认保留新版的修改**，只有核心冲突（游戏路径、主账号等）才弹差异清单；
+- `plugins/` **不迁移**，只在设置页卡片上引导重新安装；
+- 备份 `config_backup_<YYYYMMDD_HHMMSS>/` **永久保留**，程序不自动删；设置页卡片显示备份目录数与总占用。
+
+> **本节在 arm-1 上一条都无法执行**（aarch64 Linux，跑不了 Windows 冻结包）。下面每一步都是给 Windows 真机准备的可粘贴命令，跑完把实际输出与 `PASS` / `FAIL` 填进第 12 节记录表。跑不了的写「未执行 + 原因」，不要按代码推断为通过。
+
+### 10.0 通用准备与清单工具
+
+1. 准备两个目录：新根层 `<解压目录>`（示例 `C:\TestOneDragon-Mig`）与旧安装目录（示例 `C:\TestOneDragon-Legacy`）。
+
+   ```powershell
+   $newRoot = 'C:\TestOneDragon-Mig'
+   $legacy  = 'C:\TestOneDragon-Legacy'
+   Remove-Item -Recurse -Force $newRoot, $legacy -ErrorAction SilentlyContinue
+   $zip = (Get-ChildItem <仓库根目录>\deploy\dist\releases -Filter '*win-Portable.zip' | Select-Object -First 1).FullName
+   Expand-Archive -Path $zip -DestinationPath $newRoot
+   Get-ChildItem $newRoot | Select-Object Name
+   ```
+
+   期望：`OneDragon.exe`、`Update.exe`、`current\` 都在。
+
+2. 造一个旧安装目录。它同时包含白名单数据与所有「严禁迁移」的目录，后面靠它一次验完迁移范围与只读性：
+
+   ```powershell
+   $dirs = @(
+       'config\00', 'config\01', 'custom\assets\ui\banner',
+       'assets\models\onnx_ocr', 'assets\template', 'assets\ui', 'assets\text', 'assets\game_data',
+       'plugins\sample_plugin', '.install\python', '.venv\Scripts', '.runtime',
+       'src\one_dragon', '.git', '.log', '.debug\images'
+   )
+   foreach ($d in $dirs) { New-Item -ItemType Directory -Force (Join-Path $legacy $d) | Out-Null }
+
+   [IO.File]::WriteAllBytes((Join-Path $legacy 'OneDragon-Launcher.exe'), [byte[]](0x4D, 0x5A, 0x90, 0x00))
+   Set-Content (Join-Path $legacy 'config\project.yml') @'
+   test_legacy_marker: from-legacy
+   project_name: Legacy OneDragon
+   '@
+   Set-Content (Join-Path $legacy 'config\env.yml') "game_path: 'D:\OldGamePath'`nlegacy_only_key: old-value`n"
+   Set-Content (Join-Path $legacy 'config\game_account.yml') "account: legacy-account`n"
+   Set-Content (Join-Path $legacy 'config\00\scheduler.yml') "plan: legacy-instance-zero`n"
+   Set-Content (Join-Path $legacy 'config\01\scheduler.yml') "plan: legacy-instance-one`n"
+   Set-Content (Join-Path $legacy 'custom\assets\ui\banner\banner.png') 'legacy-banner-bytes'
+   $model = New-Object byte[] (1024 * 1024)
+   (New-Object Random 42).NextBytes($model)
+   [IO.File]::WriteAllBytes((Join-Path $legacy 'assets\models\onnx_ocr\model.onnx'), $model)
+   Set-Content (Join-Path $legacy 'assets\template\corrupted_template.png') 'dirty-template'
+   Set-Content (Join-Path $legacy 'assets\ui\legacy_ui.txt') 'legacy ui'
+   Set-Content (Join-Path $legacy 'assets\text\legacy_text.txt') 'legacy text'
+   Set-Content (Join-Path $legacy 'assets\game_data\legacy_data.txt') 'legacy game data'
+   Set-Content (Join-Path $legacy 'plugins\sample_plugin\plugin.json') '{"name":"sample"}'
+   Set-Content (Join-Path $legacy '.install\python\python.exe') 'legacy-python'
+   Set-Content (Join-Path $legacy '.venv\Scripts\python.exe') 'legacy-venv'
+   Set-Content (Join-Path $legacy '.runtime\runtime.dll') 'legacy-runtime'
+   Set-Content (Join-Path $legacy 'src\one_dragon\os_utils.py') 'legacy-src'
+   Set-Content (Join-Path $legacy '.git\HEAD') 'ref: refs/heads/main'
+   Set-Content (Join-Path $legacy '.log\legacy_only_marker.log') 'legacy log'
+   Set-Content (Join-Path $legacy '.debug\images\shot.png') 'legacy debug'
+   ```
+
+   > 旧目录里的 `.log` 用**独有文件名** `legacy_only_marker.log`：新根层自己会播种一个 `.log\`（第 5 节断言它必须存在），所以不能用「`.log` 不存在」来判断，只能断言旧日志文件没被搬过去。
+
+3. 把下面两个函数粘贴进当前 PowerShell 会话。后面所有 SHA-256 断言都靠它们，不要用「看起来一样」代替：
+
+   ```powershell
+   function Get-TreeManifest {
+       param(
+           [Parameter(Mandatory)][string]$Root,
+           [switch]$FilesOnly
+       )
+       $rootFull = (Resolve-Path -LiteralPath $Root).Path
+       $items = @()
+       foreach ($f in Get-ChildItem -LiteralPath $rootFull -Recurse -File -Force) {
+           $items += [pscustomobject]@{
+               Kind     = 'File'
+               RelPath  = $f.FullName.Substring($rootFull.Length).TrimStart('\')
+               Length   = $f.Length
+               MtimeUtc = $f.LastWriteTimeUtc.ToString('o')
+               Sha256   = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash
+           }
+       }
+       if (-not $FilesOnly) {
+           foreach ($d in Get-ChildItem -LiteralPath $rootFull -Recurse -Directory -Force) {
+               $items += [pscustomobject]@{
+                   Kind     = 'Dir'
+                   RelPath  = $d.FullName.Substring($rootFull.Length).TrimStart('\')
+                   Length   = 0
+                   MtimeUtc = $d.LastWriteTimeUtc.ToString('o')
+                   Sha256   = ''
+               }
+           }
+       }
+       @($items | Sort-Object RelPath)
+   }
+
+   function Compare-TreeManifest {
+       param(
+           [Parameter(Mandatory)][array]$Before,
+           [Parameter(Mandatory)][array]$After,
+           [switch]$IgnoreMtime,
+           [string]$Label = 'manifest'
+       )
+       $props = @('Kind', 'RelPath', 'Length', 'Sha256')
+       if (-not $IgnoreMtime) { $props += 'MtimeUtc' }
+       $diffs = @(Compare-Object -ReferenceObject $Before -DifferenceObject $After -Property $props)
+       if ($diffs.Count -gt 0) {
+           Write-Host "FAIL: $Label 有 $($diffs.Count) 处差异（前 $([Math]::Min(20, $diffs.Count)) 条）："
+           $diffs | Select-Object -First 20 | Format-Table -AutoSize | Out-String | Write-Host
+           return $false
+       }
+       Write-Host "PASS: $Label 完全一致（$($Before.Count) 条记录：文件哈希/大小/时间/目录结构）"
+       return $true
+   }
+   ```
+
+   期望：粘贴后 `$Before = Get-TreeManifest $legacy` 能返回非空数组；`Compare-TreeManifest -Before $Before -After $Before -Label '自检'` 打印 `PASS`。
+
+### 10.1 全新首启：选「我是新用户」，之后不再弹窗
+
+1. 从 `<解压目录>` 根层启动（`C:\TestOneDragon-Mig\OneDragon.exe`），等待主窗口出现。
+
+2. 期望：首启出现一次迁移弹窗，含【选择旧版本目录】【我是新用户】【以后再说】三个按钮。点【我是新用户】。
+
+3. 断言标记与目录状态：
+
+   ```powershell
+   cd $newRoot
+   $status = Get-Content .\.legacy_migration_status.json -Raw -Encoding UTF8 | ConvertFrom-Json
+   $status | ConvertTo-Json
+   if ($status.status -ne 'dismissed') { Write-Host "FAIL: status=$($status.status)，期望 dismissed"; exit 1 }
+   if (@(Get-ChildItem -Force -Directory -Filter 'config_backup_*').Count -ne 0) { Write-Host 'FAIL: 没迁移却生成了 config_backup_*'; exit 1 }
+   if (Test-Path .\config\00) { Write-Host 'FAIL: 全新首启不应出现多实例子目录'; exit 1 }
+   Write-Host 'PASS: 我是新用户 -> dismissed，无备份、无迁移数据'
+   ```
+
+   期望：`status` 为 `dismissed`，最后打印 `PASS`，退出码 0。
+
+4. 关闭应用，记下标记文件的哈希，再启动一次：
+
+   ```powershell
+   $markerHash1 = (Get-FileHash .\.legacy_migration_status.json -Algorithm SHA256).Hash
+   Start-Process -FilePath (Join-Path $newRoot 'OneDragon.exe') -WorkingDirectory $newRoot
+   Start-Sleep -Seconds 60
+   ```
+
+   期望（人工观察 + 断言）：**不再出现迁移弹窗**；标记文件哈希不变：
+
+   ```powershell
+   $markerHash2 = (Get-FileHash .\.legacy_migration_status.json -Algorithm SHA256).Hash
+   if ($markerHash1 -ne $markerHash2) { Write-Host 'FAIL: 第二次启动改写了迁移标记'; exit 1 }
+   if (@(Get-ChildItem -Force -Directory -Filter 'config_backup_*').Count -ne 0) { Write-Host 'FAIL: 第二次启动产生了备份目录'; exit 1 }
+   Write-Host 'PASS: dismissed 后不再弹窗，标记未被改写'
+   ```
+
+5. 打开「设置 → 脚本环境 → 数据管理」页，找到「旧版本数据迁移」卡片，期望状态行显示「当前状态：已跳过（新用户）」，并有【从旧版本导入数据】和【打开所在目录】两个入口，以及「第三方插件（plugins/）不迁移」的说明。
+
+### 10.2 迁移后首启：旧目录 SHA-256 前后比对 + 新根层数据正确 + 再启动不弹窗
+
+> 这是人类点名要求的用例：**旧目录迁移前后逐文件 SHA-256 必须完全一致**，目录结构与 mtime 也要一致。
+
+1. 迁移前导出旧目录清单（文件 + 目录）：
+
+   ```powershell
+   $legacyBefore = Get-TreeManifest -Root $legacy
+   $legacyBefore | Measure-Object | Select-Object Count
+   $legacyBefore | Export-Csv -NoTypeInformation -Encoding UTF8 "$env:TEMP\legacy-before.csv"
+   ```
+
+   期望：`Count` 大于 20（示例目录约 24 条）。
+
+2. 启动 `$newRoot\OneDragon.exe`，首启弹窗点【选择旧版本目录】，选中 `C:\TestOneDragon-Legacy`。
+
+3. 期望：出现预览/确认框，展示将迁移的内容（`config/`、`custom/`、`assets/models/`）、总体积，并明确说明旧目录只读。确认迁移，等待完成提示。
+
+4. 迁移后重新导出旧目录清单并逐项比对：
+
+   ```powershell
+   $legacyAfter = Get-TreeManifest -Root $legacy
+   $ok = Compare-TreeManifest -Before $legacyBefore -After $legacyAfter -Label '旧目录迁移前后'
+   if (-not $ok) { exit 1 }
+   if ($legacyAfter.Count -ne $legacyBefore.Count) { Write-Host "FAIL: 旧目录文件/目录数 $($legacyBefore.Count) -> $($legacyAfter.Count)"; exit 1 }
+   Write-Host "PASS: 旧目录 $($legacyAfter.Count) 条记录逐文件 SHA-256、大小、mtime、目录结构全部未变"
+   ```
+
+   期望：打印 `PASS`，退出码 0。**任何一条差异都直接判失败**，把 `Compare-Object` 输出原样贴回 Issue。
+
+5. 断言新根层数据正确、白名单之外一个都没进来：
+
+   ```powershell
+   cd $newRoot
+   $fail = @()
+   foreach ($p in @(
+       'config\project.yml', 'config\env.yml', 'config\00\scheduler.yml', 'config\01\scheduler.yml',
+       'custom\assets\ui\banner\banner.png', 'assets\models\onnx_ocr\model.onnx'
+   )) { if (-not (Test-Path -LiteralPath $p)) { $fail += "缺少白名单文件: $p" } }
+
+   foreach ($p in @('.install', '.venv', '.runtime', 'src', '.git', '.debug', 'plugins')) {
+       if (Test-Path -LiteralPath $p) { $fail += "严禁迁移的目录出现在新根层: $p" }
+   }
+   if (Test-Path -LiteralPath '.log\legacy_only_marker.log') { $fail += '旧 .log 被迁入新根层' }
+   if (@(Get-ChildItem -Recurse -File -Force -Filter 'corrupted_template.png').Count -ne 0) { $fail += '旧 assets/template 脏文件被迁入' }
+   if (@(Get-ChildItem -Recurse -File -Force -Filter 'legacy_ui.txt').Count -ne 0) { $fail += '旧只读资源 assets/ui 被迁入' }
+   if (@(Get-ChildItem -Recurse -File -Force -Filter 'legacy_text.txt').Count -ne 0) { $fail += '旧只读资源 assets/text 被迁入' }
+   if (@(Get-ChildItem -Recurse -File -Force -Filter 'legacy_data.txt').Count -ne 0) { $fail += '旧只读资源 assets/game_data 被迁入' }
+   if (@(Get-ChildItem -Recurse -File -Force -Filter 'plugin.json' | Where-Object { $_.FullName -notmatch '\\current\\' }).Count -ne 0) { $fail += 'plugins 被迁入新根层' }
+
+   if ($fail.Count -gt 0) { $fail | ForEach-Object { Write-Host "FAIL: $_" }; exit 1 }
+   Write-Host 'PASS: 白名单三类数据到位，plugins/只读资源/旧运行时/旧源码/旧日志均未进入新根层'
+   ```
+
+6. 断言迁移标记与备份：
+
+   ```powershell
+   $status = Get-Content .\.legacy_migration_status.json -Raw -Encoding UTF8 | ConvertFrom-Json
+   $status | ConvertTo-Json
+   if ($status.status -ne 'migrated') { Write-Host "FAIL: status=$($status.status)"; exit 1 }
+   if ($status.source_path -ne $legacy) { Write-Host "FAIL: source_path=$($status.source_path)"; exit 1 }
+   if (@(Get-ChildItem -Force -Directory | Where-Object { $_.Name -like '.migration_staging_*' -or $_.Name -like '.config.backup_*' }).Count -ne 0) {
+       Write-Host 'FAIL: 迁移成功后有 staging/临时备份残留'; exit 1
+   }
+   Write-Host 'PASS: 标记 migrated，source_path 正确，无 staging 残留'
+   ```
+
+7. 关闭应用，再启动一次，期望**不再弹窗**，配置仍在：
+
+   ```powershell
+   $markerHash1 = (Get-FileHash .\.legacy_migration_status.json -Algorithm SHA256).Hash
+   Start-Process -FilePath (Join-Path $newRoot 'OneDragon.exe') -WorkingDirectory $newRoot
+   Start-Sleep -Seconds 60
+   $markerHash2 = (Get-FileHash .\.legacy_migration_status.json -Algorithm SHA256).Hash
+   if ($markerHash1 -ne $markerHash2) { Write-Host 'FAIL: 第二次启动改写了迁移标记'; exit 1 }
+   if ((Get-Content .\config\project.yml -Raw) -notmatch 'test_legacy_marker') { Write-Host 'FAIL: 迁移后的配置在重启后丢失'; exit 1 }
+   Write-Host 'PASS: migrated 后不再弹窗，配置保留'
+   ```
+
+### 10.3 延迟迁移覆盖：新版改动保留、备份目录生成、卡片数量与占用正确
+
+1. 全新解压到 `$newRoot` 后首启，弹窗点【以后再说】。
+
+2. 断言 `skipped` 且没有备份：
+
+   ```powershell
+   cd $newRoot
+   $status = Get-Content .\.legacy_migration_status.json -Raw -Encoding UTF8 | ConvertFrom-Json
+   if ($status.status -ne 'skipped') { Write-Host "FAIL: status=$($status.status)，期望 skipped"; exit 1 }
+   Write-Host 'PASS: 以后再说 -> skipped'
+   ```
+
+3. 关闭应用，在新版里造出「用户已修改」状态（改核心冲突键 `game_path`、加一个普通键、加一张自定义 banner）：
+
+   ```powershell
+   Set-Content .\config\env.yml "game_path: 'D:\NewGamePath'`nnew_version_key: new-value`n"
+   Add-Content .\config\project.yml "`ntest_delay_marker: keep-me`n"
+   Set-Content .\custom\assets\ui\banner\new_banner.png 'new-banner-bytes'
+   ```
+
+4. 记录迁移前新根层 `config` / `custom` 的清单（备份内容要等于它）：
+
+   ```powershell
+   $newBefore = Get-TreeManifest -Root (Join-Path $newRoot 'config')
+   $newCustomBefore = Get-TreeManifest -Root (Join-Path $newRoot 'custom')
+   ```
+
+5. 启动应用。期望：**不弹迁移窗**（`skipped` 不主动提示）。进入「设置 → 脚本环境 → 数据管理」页，卡片状态行应为「当前状态：已跳过」，点【从旧版本导入数据】，选择 `C:\TestOneDragon-Legacy` 并确认。
+
+6. 期望：出现「检测到新版本已有配置」弹窗，差异清单里列出 `game_path` 的旧值 `D:\OldGamePath` 与新值 `D:\NewGamePath`，选择【保留新版修改（推荐）】。迁移完成后：
+
+   ```powershell
+   cd $newRoot
+   $fail = @()
+   if ((Get-Content .\config\env.yml -Raw) -notmatch "D:\\NewGamePath") { $fail += '新版 game_path 被旧版覆盖' }
+   if ((Get-Content .\config\project.yml -Raw) -notmatch 'test_delay_marker') { $fail += '新版普通键被旧版覆盖' }
+   if ((Get-Content .\config\env.yml -Raw) -notmatch 'legacy_only_key') { $fail += '旧版独有键未补齐' }
+   if (-not (Test-Path .\config\01\scheduler.yml)) { $fail += '旧版多实例 config/01 未补入' }
+   if (-not (Test-Path .\assets\models\onnx_ocr\model.onnx)) { $fail += '旧版模型未补入' }
+   if (-not (Test-Path .\custom\assets\ui\banner\new_banner.png)) { $fail += '新版自定义 banner 丢失' }
+   if (Test-Path .\plugins) { $fail += 'plugins 被迁入' }
+   if ($fail.Count -gt 0) { $fail | ForEach-Object { Write-Host "FAIL: $_" }; exit 1 }
+   Write-Host 'PASS: 新版修改保留、旧版缺失项补齐、plugins 未迁入'
+   ```
+
+7. 断言备份目录生成，且内容等于迁移前的新根层：
+
+   ```powershell
+   $backups = @(Get-ChildItem -Force -Directory -Filter 'config_backup_*')
+   if ($backups.Count -ne 1) { Write-Host "FAIL: config_backup_* 数量=$($backups.Count)，期望 1"; exit 1 }
+   $name = $backups[0].Name
+   if ($name -notmatch '^config_backup_\d{8}_\d{6}$') { Write-Host "FAIL: 备份目录命名不合契约: $name"; exit 1 }
+   $backupRoot = $backups[0].FullName
+
+   $backupCfg = Get-TreeManifest -Root (Join-Path $backupRoot 'config')
+   $backupCustom = Get-TreeManifest -Root (Join-Path $backupRoot 'custom')
+   $ok1 = Compare-TreeManifest -Before $newBefore -After $backupCfg -IgnoreMtime -Label '备份 config 内容'
+   $ok2 = Compare-TreeManifest -Before $newCustomBefore -After $backupCustom -IgnoreMtime -Label '备份 custom 内容'
+   if (-not ($ok1 -and $ok2)) { exit 1 }
+
+   $status = Get-Content .\.legacy_migration_status.json -Raw -Encoding UTF8 | ConvertFrom-Json
+   if ($status.status -ne 'migrated') { Write-Host "FAIL: status=$($status.status)"; exit 1 }
+   if ($status.backup_path -ne $name) { Write-Host "FAIL: backup_path=$($status.backup_path)，期望 $name"; exit 1 }
+   Write-Host "PASS: 生成 $name，内容等于迁移前的新根层，标记 backup_path 正确"
+   ```
+
+8. 断言设置页卡片上的「备份数量 / 总占用」与磁盘实际值一致：
+
+   ```powershell
+   $count = $backups.Count
+   $bytes = ($backups | Get-ChildItem -Recurse -File -Force | Measure-Object -Property Length -Sum).Sum
+   $expected = '{0:N1} MB' -f ($bytes / 1MB)
+   Write-Host "期望卡片显示：$count 个备份 / 合计 $bytes 字节（$expected）"
+   ```
+
+   期望：卡片文本里的目录数是 `1`，总占用与 `$bytes` 四舍五入到同一单位后相等（录下卡片原文与这里算出的值，差一个数量级或显示 0 都判失败）。
+
+9. 关闭应用，再启动一次，期望不再弹窗、新版修改与备份都还在。
+
+### 10.4 迁移失败回退：新根层恢复原状、无残留
+
+> 用「旧目录里的文件被独占占用」制造复制阶段失败。也可以把新根层设成不可写，但改 ACL 容易留下副作用，优先用锁。
+
+1. 全新解压到 `$newRoot` 并首启，点【以后再说】；关闭应用。
+
+2. 在新版里造一条可辨识的修改，并记录新根层清单：
+
+   ```powershell
+   cd $newRoot
+   Add-Content .\config\project.yml "`ntest_fail_marker: rollback-me`n"
+   $rootBefore = @{
+       config  = Get-TreeManifest -Root (Join-Path $newRoot 'config')
+       custom  = Get-TreeManifest -Root (Join-Path $newRoot 'custom')
+       models  = Get-TreeManifest -Root (Join-Path $newRoot 'assets\models')
+   }
+   $legacyBeforeFail = Get-TreeManifest -Root $legacy
+   ```
+
+3. 独占占用旧目录里的一个模型文件（`FileShare.None`，其他进程读不到）：
+
+   ```powershell
+   $lock = [System.IO.File]::Open("$legacy\assets\models\onnx_ocr\model.onnx", 'Open', 'Read', 'None')
+   ```
+
+4. 启动应用 → 设置页 →【从旧版本导入数据】→ 选择 `C:\TestOneDragon-Legacy` → 确认迁移。
+
+5. 期望：出现「迁移未完成」提示并给出失败原因；应用**不崩溃、不退出**。关闭提示框。
+
+6. 断言新根层恢复到迁移前状态、无任何残留：
+
+   ```powershell
+   cd $newRoot
+   $ok = $true
+   $ok = (Compare-TreeManifest -Before $rootBefore.config -After (Get-TreeManifest -Root (Join-Path $newRoot 'config')) -Label '回退后 config') -and $ok
+   $ok = (Compare-TreeManifest -Before $rootBefore.custom -After (Get-TreeManifest -Root (Join-Path $newRoot 'custom')) -Label '回退后 custom') -and $ok
+   $ok = (Compare-TreeManifest -Before $rootBefore.models -After (Get-TreeManifest -Root (Join-Path $newRoot 'assets\models')) -Label '回退后 assets/models') -and $ok
+   if (-not $ok) { exit 1 }
+
+   $staging = @(Get-ChildItem -Force -Directory | Where-Object { $_.Name -like '.migration_staging_*' })
+   $tmpBackup = @(Get-ChildItem -Force -Directory | Where-Object { $_.Name -like '.config.backup_*' })
+   $backups = @(Get-ChildItem -Force -Directory -Filter 'config_backup_*')
+   if ($staging.Count -ne 0)   { Write-Host "FAIL: 残留 staging: $($staging.Name -join ', ')"; exit 1 }
+   if ($tmpBackup.Count -ne 0) { Write-Host "FAIL: 残留 .config.backup_*: $($tmpBackup.Name -join ', ')"; exit 1 }
+   if ($backups.Count -ne 0)   { Write-Host "FAIL: 失败却留下 config_backup_*: $($backups.Name -join ', ')"; exit 1 }
+   $status = Get-Content .\.legacy_migration_status.json -Raw -Encoding UTF8 | ConvertFrom-Json
+   if ($status.status -eq 'migrated') { Write-Host 'FAIL: 迁移失败却写了 migrated 标记'; exit 1 }
+   if ((Get-Content .\config\project.yml -Raw) -notmatch 'test_fail_marker') { Write-Host 'FAIL: 回退后新版配置丢失'; exit 1 }
+   if (Test-Path .\config\01\scheduler.yml) { Write-Host 'FAIL: 失败后仍留下了旧目录的部分文件'; exit 1 }
+   Write-Host 'PASS: 新根层逐文件恢复原状，无 staging/临时备份/持久备份残留，未写 migrated 标记'
+   ```
+
+7. 释放锁，再对旧目录做一次前后比对（失败的这次也不能写旧目录）：
+
+   ```powershell
+   $lock.Close(); $lock.Dispose()
+   $ok = Compare-TreeManifest -Before $legacyBeforeFail -After (Get-TreeManifest -Root $legacy) -Label '失败流程后的旧目录'
+   if (-not $ok) { exit 1 }
+   ```
+
+8. 在「设置 → 脚本环境 → 数据管理」重新点【从旧版本导入数据】并发起迁移，期望这次成功；关闭并重启应用，确认数据可用。
+
+### 10.5 C1：首启后根层没有 `.install/` 和 `.venv/`
+
+> 验收背景：冻结模式此前会在根层创建这两个空目录（来自旧启动器的环境路径初始化）。C1 要求从源头不创建，而不是创建后删除。用 10.1 或 10.2 已经完成首启的 `$newRoot` 直接断言。
+
+```powershell
+cd $newRoot
+$fail = @()
+if (Test-Path -LiteralPath '.install') { $fail += '根层存在 .install' }
+if (Test-Path -LiteralPath '.venv')    { $fail += '根层存在 .venv' }
+$nested = @(Get-ChildItem -Recurse -Directory -Force | Where-Object { $_.Name -in @('.install', '.venv') })
+if ($nested.Count -ne 0) { $fail += "根层下仍存在 .install/.venv: $($nested.FullName -join ', ')" }
+if ($fail.Count -gt 0) { $fail | ForEach-Object { Write-Host "FAIL: $_" }; exit 1 }
+Write-Host 'PASS: 首启后根层没有 .install / .venv'
+```
+
+期望：打印 `PASS`，退出码 0。同时确认 `config\`、`assets\`、`custom\`、`.log\` 仍然存在（C1 不能靠少建目录顺手把正常目录也省掉）：
+
+```powershell
+foreach ($p in @('config', 'assets', 'custom', '.log')) {
+    if (-not (Test-Path -LiteralPath $p)) { Write-Host "FAIL: 正常目录缺失: $p"; exit 1 }
+}
+Write-Host 'PASS: 正常根层目录齐全'
+```
+
+## 11. 未验证项（本次不覆盖，交付时需人类单独确认）
 
 以下几项设计文档第 5 节已明确标注「未验证，写入交付说明供人类验收确认」，本清单不把它们算作通过：
 
@@ -1121,8 +1528,9 @@ Get-Process OneDragon -ErrorAction SilentlyContinue | Stop-Process -Force
 - 离线模型包 `ZenlessZoneZero-OneDragon-Models.zip` 解压到根层后离线可用。
 - 离线更新（新 `Setup.exe` 覆盖安装到已有目录）后的数据保留与版本前进：步骤与断言见 6.1 节，**未实测**。
 - CNB 镜像同步 `RELEASES` / `releases.win.json` / `.nupkg` 是否完整。
+- 旧数据迁移的全部场景（第 10 节：全新首启、迁移后首启、延迟迁移覆盖、失败回退、C1）：需要 Windows 冻结包与真实弹窗交互，arm-1 无法执行；单测覆盖到的只是迁移核心函数，不等于真机通过。
 
-## 11. 执行记录表
+## 12. 执行记录表
 
 | 编号 | 步骤 | 期望结果 | 实际结果 | 结论（通过/失败） | 备注 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -1152,3 +1560,8 @@ Get-Process OneDragon -ErrorAction SilentlyContinue | Stop-Process -Force
 | 8 | 源码模式 | `is_velopack_mode()` 为 `False`，`get_work_dir()` 为仓库根目录，GUI 正常 | | | |
 | 9 | 进程清理 | 退出后无 `OneDragon` / `Update` 残留进程 | | | |
 | 10 | 未验证项 | 应用内检查更新 UI / 窗口渲染 / `Setup.exe` 安装器界面观感 | | | 需人类单独确认 |
+| 10.1 | 全新首启选「我是新用户」 | 只弹一次窗；`.legacy_migration_status.json` 的 `status` 为 `dismissed`；无 `config_backup_*`；第二次启动不再弹窗且标记哈希不变 | | | **未实测**，Windows 真机 |
+| 10.2 | 迁移后首启（旧目录 SHA-256 比对） | 旧目录迁移前后逐文件 SHA-256、大小、mtime、目录结构 **100% 一致**（`Compare-TreeManifest` 打印 `PASS`）；新根层只有 `config/`（含多实例）、`custom/`、`assets/models/`；`plugins/.install/.venv/.runtime/src/.git/.debug` 与只读资源脏文件均未进入；标记 `migrated`、`source_path` 正确；重启不弹窗 | | | **未实测**，人类点名用例 |
+| 10.3 | 延迟迁移覆盖 | 首启 `skipped` 后不弹窗；设置页迁移保留新版 `game_path` 与普通键、补入旧版多实例/模型；生成且仅生成一个 `config_backup_<YYYYMMDD_HHMMSS>`，内容等于迁移前的新根层；标记 `migrated` 且 `backup_path` 正确；卡片备份数与总占用与磁盘一致 | | | **未实测**，Windows 真机 |
+| 10.4 | 迁移失败回退 | 旧目录文件被独占占用时提示「迁移未完成」且应用不崩；`config` / `custom` / `assets/models` 清单与迁移前逐文件一致；无 `.migration_staging_*`、`.config.backup_*`、`config_backup_*` 残留；未写 `migrated`；旧目录清单也未变；释放锁后重试成功 | | | **未实测**，Windows 真机 |
+| 10.5 | C1：根层无 `.install` / `.venv` | 首启后根层及递归子目录都没有 `.install`、`.venv`；`config` / `assets` / `custom` / `.log` 仍齐全 | | | **未实测**，Windows 真机 |
