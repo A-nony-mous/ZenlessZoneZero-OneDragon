@@ -25,6 +25,7 @@ dependencies = [
     "pywin32<312",
     "websocket-client==1.9.2",
     "vgamepad==0.2.0",
+    "velopack==1.2.161",
 ]
 
 [dependency-groups]
@@ -51,9 +52,7 @@ default-groups = []
 
 # Ruff configuration
 [tool.ruff]
-extend-exclude = [
-    "deploy/module_manifest.py",
-]
+extend-exclude = []
 
 # Same as Black.
 line-length = 88
