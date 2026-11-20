@@ -47,7 +47,55 @@
 
 ## 1. 构建单目录产物（对应验收标准 1）
 
-> 与设计文档的差异（已修正）：设计原文先 `cd deploy` 再执行 `pyinstaller`，之后 `--packDir deploy\dist\OneDragon` 这个相对路径就不再成立。这里统一成从仓库根目录执行，`--packDir` 保持 `deploy\dist\OneDragon`。
+> **硬性前置（D3）：必须用本仓库 `uv sync` 出来的 `.venv` 构建，禁止复用别的仓库的 venv。** 用别的仓库的环境构建，会把本仓库声明、但那份环境没装的运行时依赖静默漏掉（人类实测漏过 `websocket-client`，冻结后运行时报 `No module named 'websocket'`）。规则：
+>
+> 1. 在**本仓库根目录**执行 `uv sync --group dev`，由它生成 `<仓库根目录>\.venv`。本仓库 `pyproject.toml` 里 `default-groups = []`，不显式带 `--group dev` 就不会装 `pyinstaller` / `pyuac` / `colorama` 这些构建期依赖。
+> 2. 之后所有构建命令都走 `uv run ...`（即本仓库 `.venv`）。不要用另一个项目 `.venv\Scripts\python.exe -m pyinstaller` 之类的方式跨仓库借用环境，也不要把别的仓库的 `.venv` 复制进来。
+> 3. 构建前跑一遍下面的依赖自检；任何一个 `find_spec` 返回 `None` 就**停下**，不要继续打包。
+
+依赖自检（构建前置，逐项检查 `pyproject.toml` 的 `[project].dependencies`）：
+
+```powershell
+cd <仓库根目录>
+uv sync --group dev
+@'
+import importlib.util
+import re
+import sys
+import tomllib
+from pathlib import Path
+
+# 发行包名 -> import 时的模块名。只有少数对不上的才需要在这里列。
+MODULE_OVERRIDES = {
+    'pyside6': 'PySide6',
+    'pyside6-fluent-widgets': 'qfluentwidgets',
+    'opencv-python': 'cv2',
+    'onnxruntime-directml': 'onnxruntime',
+    'pywin32': 'win32api',
+    'pyyaml': 'yaml',
+    'websocket-client': 'websocket',
+}
+
+project = tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8'))
+deps = project['project']['dependencies']
+missing = []
+for dep in deps:
+    name = re.split(r'[<>=!~\[; ]', dep, 1)[0].strip()
+    module = MODULE_OVERRIDES.get(name.lower(), name.replace('-', '_'))
+    if importlib.util.find_spec(module) is None:
+        missing.append(f'{name} (期望可导入 {module})')
+
+print(f'运行时依赖 {len(deps)} 个，缺失 {len(missing)} 个')
+if missing:
+    print('\n'.join('MISSING ' + item for item in missing))
+    sys.exit(1)
+print('PASS: 所有运行时依赖均可导入')
+'@ | uv run python -
+```
+
+期望：输出 `运行时依赖 20 个，缺失 0 个` 与 `PASS: 所有运行时依赖均可导入`，退出码 0。输出 `MISSING websocket-client (期望可导入 websocket)` 说明用的是别的仓库的环境或者 `uv sync` 没跑，按上面的规则重来，不要忽略这行继续打包。
+
+> 统一从仓库根目录执行（设计文档第 5 节已同步），`--packDir` 保持 `deploy\dist\OneDragon`。构建环境必须是上面 D3 那套本仓库 `uv sync` 出来的 `.venv`。
 
 ```powershell
 cd <仓库根目录>
@@ -306,16 +354,30 @@ Write-Host 'nupkg 内所有 OneDragon.exe / Update.exe 签名均为 Valid'
 
    `.bundle_seed_status.json` 是第 2 轮返工新增的**按目录**播种版本记录（`{"template": "0.1.0-beta.1", "ui": ..., "text": ..., "game_data": ...}`）；根层 `.bundle_seed_version` 仍然只在四类目录全部成功后才写。两个文件都要在，缺前者说明播种逻辑回退了。
 
-4. 断言四类只读资源文件数（S4）：
+4. 断言四类只读资源文件数（S4，动态比对，不写死数字）：
 
-   > **只读资源覆盖规则（S4）**：`assets/template`、`assets/ui`、`assets/text`、`assets/game_data` 这四类目录在**升级（包版本变化）时由包内版本整体覆盖**——旧版本残留文件会被删除，手工修改也会被抹掉。因此不要手工改这四个目录；模板产出请放 `custom/` 或按 S4 建议迁出。`config/` 的规则不同：只补缺失文件与缺失的顶层键，已有键一律不覆盖，用户文件损坏时跳过（验证步骤见第 6 节第 2 步与第 7 节第 4 步）。数字取自设计文档第 5 节；如果仓库资源在改造期间有增删，记录实际值并说明：
+   > **只读资源覆盖规则（S4）**：`assets/template`、`assets/ui`、`assets/text`、`assets/game_data` 这四类目录在**升级（包版本变化）时由包内版本整体覆盖**——旧版本残留文件会被删除，手工修改也会被抹掉。因此不要手工改这四个目录；模板产出请放 `custom/` 或按 S4 建议迁出。`config/` 的规则不同：只补缺失文件与缺失的顶层键，已有键一律不覆盖，用户文件损坏时跳过（验证步骤见第 6 节第 2 步与第 7 节第 4 步）。
+   >
+   > **断言口径**：根层 `assets\<tree>` 的文件数必须等于**包内** `current\_internal\resources\assets\<tree>` 的文件数。包内路径按 `deploy/OneDragon-Portable.spec` 的 datas 目标核对过——四类资源的目标目录是 `resources/assets/<tree>`，PyInstaller 6 的单目录模式把 datas 收进 `_internal\`，Velopack 又把它整体放到 `current\` 下，所以完整路径是 `current\_internal\resources\assets\<tree>`。不写死数字：源资源增删或换基线时不会假失败，而且能真正证明「播种把包里的东西一个不落地复制到了根层」。
 
    ```powershell
-   (Get-ChildItem -Path .\assets\template -Recurse -File).Count      # 期望 1820
-   (Get-ChildItem -Path .\assets\ui -Recurse -File).Count            # 期望 10
-   (Get-ChildItem -Path .\assets\text -Recurse -File).Count          # 期望 8
-   (Get-ChildItem -Path .\assets\game_data -Recurse -File).Count     # 期望 178
+   cd C:\TestOneDragon
+   $trees = 'template', 'ui', 'text', 'game_data'
+   $ok = $true
+   foreach ($tree in $trees) {
+       $rootCount = (Get-ChildItem -Path ".\assets\$tree" -Recurse -File -Force).Count
+       $pkgCount  = (Get-ChildItem -Path ".\current\_internal\resources\assets\$tree" -Recurse -File -Force).Count
+       if ($rootCount -ne $pkgCount) { $ok = $false }
+       $verdict = if ($rootCount -eq $pkgCount) { '一致' } else { '不一致' }
+       '{0,-10} 根层 {1,5} / 包内 {2,5} -> {3}' -f $tree, $rootCount, $pkgCount, $verdict
+   }
+   if (-not $ok) { Write-Host 'FAIL: 至少一类资源的文件数与包内不一致'; exit 1 }
+   Write-Host 'PASS: 四类只读资源文件数与包内逐一相等'
    ```
+
+   期望：四个 `->` 结尾都是 `一致`，最后打印 `PASS`，退出码 0。
+
+   参考值（**只用于排查偏差，不作为断言**）：按本单基线 `c2e3865b` 用 `git ls-tree -r c2e3865b --name-only assets/<tree>` 数出来是 template **1948** / ui **5** / text **8** / game_data **159**。如果某一类的根层数量少于包内数量，说明播种没做完或被中断（回看 `.bundle_seed_status.json` 与 `.log\`）；如果根层多于包内，说明根层有旧版本残留没被整体覆盖（S4 回归），把实际数字记进第 11 节记录表。
 
 5. 记录版本标记内容备用：
 
@@ -503,7 +565,7 @@ $lock.Close(); $lock.Dispose()
 
 ## 8. 源码模式不回归（对应验收标准 5）
 
-> 与设计文档的差异（已修正）：设计原文和父单验收标准写的是 `python main.py`，但当前仓库根目录**没有** `main.py`。仓库的源码入口是 `src/zzz_od/gui/app.py`（见 `AGENTS.md` 常用命令）。这里按实际入口执行；如果改造确实新增了 `main.py`，再改回 `uv run python main.py`。
+> 源码模式的唯一入口是 `uv run src/zzz_od/gui/app.py`（仓库根目录下执行）。仓库根目录**没有** `main.py`，验收口径不提 `main.py`；父单 PLAY-2 正文里写的 `python main.py` 是笔误，以本节为准。
 
 1. 在仓库根目录（不是解压目录）运行：
 
@@ -565,7 +627,7 @@ $lock.Close(); $lock.Dispose()
 | 4.1 | 签名验证（B1） | `Setup.exe` / `OneDragon.exe` / `Update.exe` 的 `Get-AuthenticodeSignature` 全为 `Valid` | | | |
 | 4.2 | 非发布版本号（S5） | PR 构建为 `0.0.0-pr.<n>.g<sha>`，分支构建为 `0.0.0-dev.g<sha>`，匹配 SemVer2 | | | |
 | 4.3 | nupkg 内 exe 签名（B1-c） | 每个 `*-full.nupkg` 内的 `OneDragon.exe` / `Update.exe` 全部 `Valid` | | | |
-| 5 | 便携版首启播种 | `config` / `assets` / `custom` / `.log` / `.bundle_seed_version` / `.bundle_seed_status.json` 存在，四类资源计数 1820/10/8/178，两个版本文件内容一致 | | | |
+| 5 | 便携版首启播种 | `config` / `assets` / `custom` / `.log` / `.bundle_seed_version` / `.bundle_seed_status.json` 存在；四类资源逐个目录比对「根层 `assets\<tree>` 文件数 == 包内 `current\_internal\resources\assets\<tree>` 文件数」全部为 `一致`；两个版本文件内容一致 | | | |
 | 5.1 | 残留清理与失败重试（N1/N3） | 残留 `.new-*` / `.old-*` 被清且不误删其他目录；播种失败时应用不崩、出现一次 InfoBar、版本标记不前进、恢复后只重试失败目录 | | | 可选负向验证 |
 | 6 | 就地升级 | `current\sq.version` 为 `0.1.0-beta.2`，`config\project.yml` 的 `test_custom_marker` 保留 | | | |
 | 7 | 日志检索 | 「不是有效的 Git 仓库」计数 0，「尝试下一个代码源」计数 0 | | | |
