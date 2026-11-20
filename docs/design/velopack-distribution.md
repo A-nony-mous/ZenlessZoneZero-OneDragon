@@ -6,6 +6,19 @@
 
 ---
 
+## 0. 工作区与环境安全规范
+
+- **执行环境**：工作区机器为 `arm-1`（aarch64 Linux），路径固定为 `/home/ubuntu/work/ZenlessZoneZero-OneDragon`。
+- **不污染远端与推送防护**：
+  - 本地代码只在 `feat/velopack` 提交，**绝对不 push 任何远端**，不推 fork，不配推送凭据，不跑 GitHub Actions。
+  - **防止误推主仓措施**：为彻底防止后续开发或脚本误触发推送，工作区内已将 `origin` 的 push URL 覆写为无效地址：
+    ```bash
+    git remote set-url --push origin DISABLED_NO_PUSH
+    ```
+  - 后续阶段开发产物将在本地分支固化，由人类后续直接从该机器拉取。
+
+---
+
 ## 1. 改动清单
 
 本清单覆盖父单 PLAY-2「落地要点 1–6」以及「尚未完成」全部任务项。
@@ -25,7 +38,7 @@
 | `src/zzz_od/telemetry/telemetry_manager.py` | 修改 | 遥测采集跳过 Git HEAD 查询，Velopack 模式下填充固定标识或空串 | `_get_commit_version() -> str` | `TelemetryManager.initialize()` |
 | `src/zzz_od/gui/view/home/home_interface.py` | 修改 | 首页更新流程由旧启动器检查改为基于 `updater.py` 的异步更新状态流 | `_init_update_runner() -> None`<br>`_on_update_status_changed(...)` | `HomeInterface.on_interface_shown()` |
 | `tools/ci/get_version.py` | 修改 | 输出版本号转为标准 SemVer 2.0.0（剥离 `v` 前缀供 Velopack 打包），Tag 保留 `v` 前缀 | `main() -> int` | GitHub Actions `version` job |
-| `.github/workflows/build-release.yml` | 修改 | 移除旧多 spec 构建与 `src` 复制步骤；接入 `deploy/OneDragon-Portable.spec` 与 `vpk pack --runtime win-x64`；调整 SignPath 签名矩阵与 Release 附件 | Actions YAML | CI/CD 发布流程 |
+| `.github/workflows/build-release.yml` | 修改 | 移除旧多 spec 构建与 `src` 复制步骤；接入 `deploy/OneDragon-Portable.spec` 与 `vpk pack --runtime win-x64`；调整非发布构建路径与 SignPath 签名矩阵 | Actions YAML | CI/CD 发布流程 |
 | `tools/ci/prepare_release_assets.py` | 修改 | 废除旧 RuntimeLauncher/Launcher 打包逻辑；生成独立的离线模型包 `ZenlessZoneZero-OneDragon-Models.zip` 并组织发布物料 | `main() -> int` | GitHub Actions `release` job |
 | `deploy/generate_module_manifest.py` | 删除 | 移除已废弃的模块清单生成工具 | — | 原旧版 RuntimeLauncher |
 | `deploy/module_manifest.py` | 删除 | 移除已废弃的模块清单文件 | — | 原旧版 RuntimeLauncher |
@@ -157,7 +170,11 @@ stateDiagram-v2
 
 ---
 
-## 4. CI 改造对照设计
+## 4. CI 改造与非发布构建设计
+
+> [!NOTE]
+> **执行约束说明**：
+> 本设计文档包含完整的 `.github/workflows/build-release.yml`、`tools/ci/get_version.py`、`tools/ci/prepare_release_assets.py` 改造规范，并作为源码变更写入仓库。但在当前研发阶段中，**不推远端、不配置外部凭据、不实际触发 GitHub Actions 执行**。
 
 ### 4.1 `.github/workflows/build-release.yml` 改造前后步骤对照
 
@@ -174,19 +191,50 @@ stateDiagram-v2
 5. Bundle wheels (Environment.zip)          5. (移除 wheels 导出与打包)
 6. 准备发布物料 (prepare_release_assets.py):  6. 安装 Velopack CLI：
    - 下载嵌入式 cpython 运行时                   - dotnet tool install -g vpk
-   - 多次 zip 打包生成 Full/WithRuntime 等    7. SignPath 签名阶段 1：
+   - 多次 zip 打包生成 Full/WithRuntime 等    7. SignPath 签名阶段 1 (仅发布)：
                                                 - 对 deploy/dist/OneDragon/OneDragon.exe 签名
                                              8. vpk 打包发布物料：
                                                 - vpk pack --runtime win-x64 ...
-                                             9. SignPath 签名阶段 2：
+                                             9. SignPath 签名阶段 2 (仅发布)：
                                                 - 对 Setup.exe 与 Update.exe 签名
                                              10. 离线模型包构建：
                                                 - 打包 assets/models 为 Models.zip
-                                             11. Create Release：
-                                                - 上传 Setup.exe / Portable.zip / RELEASES 等
+                                             11. 发布分支或 Artifact 收集
 ```
 
-### 4.2 `vpk pack` 规范执行命令
+### 4.2 非发布构建路径与正式发布隔离防护
+
+为支持开发者/人类在 fork 仓手动测试（`workflow_dispatch`）或给 PR 打 `build` 标签进行构建检验，流水线必须具备严格的非发布构建路径与防护机制：
+
+1. **触发条件与上下文环境变量**：
+   ```yaml
+   env:
+     # 仅当为 tag 推送，或在主仓手动触发并显式勾选 create_release 时，才置为 true
+     CREATE_RELEASE: ${{ github.repository_owner == 'OneDragon-Anything' && ((github.event_name == 'workflow_dispatch' && inputs.create_release == true) || startsWith(github.ref, 'refs/tags/v')) }}
+   ```
+2. **非发布构建逻辑（只出 Artifact，不建 Release、不跑 SignPath）**：
+   - **打包与 Pack 正常执行**：在 `windows-latest` runner 上运行 PyInstaller 与 `vpk pack --runtime win-x64`。
+   - **SignPath 门禁拦截**：
+     ```yaml
+     sign:
+       if: ${{ env.CREATE_RELEASE == 'true' }}
+     ```
+     非发布构建跳过所有 SignPath 步骤，不需要任何 `SIGNPATH_API_TOKEN` 或签名组织凭据。
+   - **Artifact 收集与上传**：
+     非发布构建时，通过 `actions/upload-artifact@v4` 将产物完整导出供下载验证：
+     - `ZenlessZoneZero-OneDragon-Setup.exe`
+     - `ZenlessZoneZero-OneDragon-win-Portable.zip`
+     - `RELEASES`
+     - `releases.win.json`
+     - `*.nupkg`
+   - **Release 门禁拦截**：
+     ```yaml
+     release:
+       if: ${{ env.CREATE_RELEASE == 'true' }}
+     ```
+     彻底杜绝非发布构建误建 Release、打 Git Tag 或向 CNB 发起镜像同步。
+
+### 4.3 `vpk pack` 规范执行命令
 
 在 Windows Runner 的 PowerShell 环境下，必须严格执行以下命令：
 
@@ -216,7 +264,7 @@ vpk pack `
 > 1. 必须带 `--runtime win-x64`。若省略，vpk 默认打包为 win-x86，将导致 64 位 CPython 动态库加载失败引发崩溃。
 > 2. 版本号必须剔除前导 `v`（符合 SemVer 2.0.0 规范，如 `0.1.0-beta.1`）。
 
-### 4.3 产物矩阵与 SignPath 签名范围
+### 4.4 产物矩阵与 SignPath 签名范围
 
 #### 产物输出目录 (`deploy/dist/releases/`)
 - `ZenlessZoneZero-OneDragon-Setup.exe`：一键安装程序，集成安装向导与桌面快捷方式。
@@ -226,13 +274,12 @@ vpk pack `
 - `ZenlessZoneZero-OneDragon-0.1.0-beta.1-full.nupkg`：版本完整包（供更新器下载）。
 - `ZenlessZoneZero-OneDragon-Models.zip`：独立离线模型压缩包。
 
-#### SignPath 签名矩阵
-SignPath 提交签名范围由原先的 3 个旧可执行文件变更为新的核心可执行体：
+#### SignPath 签名矩阵（仅在正式发布时触发）
 1. **主程序可执行体**：`deploy\dist\OneDragon\OneDragon.exe`（在进入 `vpk pack` 前签名，确保打包进 Portable.zip 和 .nupkg 的本体受信任）。
 2. **安装器可执行体**：`deploy\dist\releases\ZenlessZoneZero-OneDragon-Setup.exe`（打包完成后签名，避免 Windows Defender / SmartScreen 拦截）。
 3. **便携更新存根**：`Update.exe`（Velopack 在 Portable 根目录中释放的执行体）。
 
-### 4.4 离线模型包生成与上传
+### 4.5 离线模型包生成与上传
 
 修改 `tools/ci/prepare_release_assets.py`：
 1. 主程序安装包中**彻底排除** `assets/models`（体积约 150MB~300MB），保持主包体积在 ~308MB 以内。
@@ -246,17 +293,17 @@ SignPath 提交签名范围由原先的 3 个旧可执行文件变更为新的�
 
 ## 5. 验证矩阵
 
-根据执行环境限制：**arm-1 是 aarch64 Linux，没有 Windows SDK、Wine 或 .NET 环境**。
-以下针对父单验收标准 1–6 明确区分验证场地与具体验证方法：
+根据人类最新决策：**验证矩阵精简为两栏，严谨划分「arm-1 上能验」与「arm-1 验不了，交人类在 Windows 上验」**。
+对于第二栏，逐条附带清晰可执行的人类验证步骤与预期基准：
 
-| 验收标准 | 验证环境 | arm-1 Linux 验证方法与覆盖面 | Windows x64 验证方法与步骤 |
-| :--- | :--- | :--- | :--- |
-| **1. `vpk pack` 一条命令产出 `Setup.exe` 与 `Portable.zip`，两者都能装/解压后启动** | **仅限 Windows x64** | **不可执行**。<br>在 arm-1 上仅验证：<br>1) 单测静态解析 `OneDragon-Portable.spec`，断言入口、datas 资源路径存在性；<br>2) 检查 `pyproject.toml` 语法与依赖锁定。 | 1. 运行 `pyinstaller deploy/OneDragon-Portable.spec`；<br>2. 运行 `vpk pack --runtime win-x64 ...`；<br>3. 验证生成 `Setup.exe` 与 `Portable.zip`；<br>4. 安装 Setup.exe，验证快捷方式启动；解压 Portable.zip，双击 `OneDragon.exe` 启动。 |
-| **2. 解压到全新目录启动后，根层自动生成 `config/assets/custom/.log`，四类只读资源到位** | **两地均可验证** | **arm-1 单测 Mock 验证**：<br>编写 `tests/test_bundle_seed.py`：<br>1) Mock `sys.frozen=True`, `sys.executable="/mock/app/current/OneDragon.exe"`, `sys._MEIPASS="/mock/bundle"`;<br>2) 模拟空根目录执行 `bundle_seed.ensure_work_dir_ready()`；<br>3) 断言生成 `config/`, `assets/`, `custom/`, `.log/`；<br>4) 断言四类只读资源目录（`template`, `ui`, `text`, `game_data`）完整复制且生成 `.bundle_seed_version`。 | **Windows 端到端验证**：<br>1. 将 `Portable.zip` 解压至全新的 `C:\TestOneDragon`；<br>2. 启动 `OneDragon.exe`；<br>3. 查看 `<RootAppDir>` 目录结构，断言上述文件夹及资源文件存在。 |
-| **3. 改根层 `config/project.yml` 后升级，改动保留、`current/` 被替换** | **两地均可验证** | **arm-1 单测 Mock 验证**：<br>1) 预置带有自定义字段（如 `test_key: custom_val`）的 `config/project.yml`；<br>2) 模拟升级场景（`.bundle_seed_version` 低于当前版本）；<br>3) 执行 `ensure_work_dir_ready()`；<br>4) 断言用户的 `project.yml` 自定义内容未被覆盖，而 `assets/` 只读资源得到更新。 | **Windows 端到端验证**：<br>1. 安装/解压 v0.1.0-beta.1；<br>2. 修改 `config/project.yml`（如修改代理或快捷键）；<br>3. 触发升级到 v0.1.0-beta.2；<br>4. 检查 `current/` 变为新版本二进制；<br>5. 检查 `config/project.yml` 自定义改动完好保留。 |
-| **4. 完整日志里不再出现「不是有效的 Git 仓库」** | **两地均可验证** | **arm-1 单测 Mock 验证**：<br>编写 `tests/test_git_service_fallback.py`：<br>1) Mock `is_velopack_mode() = True` 且删除 mock 工作区下的 `.git` 目录；<br>2) 逐一调用 `is_current_branch_latest`、`fetch_total_commit`、`fetch_page_commit`、`get_current_version`、`get_head_commit_id`、`telemetry.initialize()`；<br>3) 断言日志输出中未出现任何 `ValueError: 目录 xxx 不是有效的 Git 仓库`，且未发生多源重试 warning。 | **Windows 端到端验证**：<br>1. 启动已打包的 `OneDragon.exe`；<br>2. 依次打开主页、资源管理页、设置页；<br>3. 退出程序，检查 `.log/` 下最新日志文件；<br>4. 全文检索 `不是有效的 Git 仓库`，确认命中数为 0。 |
-| **5. 源码模式 `python main.py` 行为与改造前一致** | **两地均可验证** | **arm-1 直接验证**：<br>1) 运行 `python3 -c "import zzz_od.gui.app"` 确保模块导入无语法错误；<br>2) 断言 `is_velopack_mode()` 返回 `False`；<br>3) 断言 `get_work_dir()` 正确返回 Git 仓库根目录；<br>4) 运行现有单元测试套件：`pytest tests/`。 | **Windows 验证**：<br>1. 在 Windows 开发机拉取分支；<br>2. 运行 `python main.py` 启动 GUI，测试核心自动化任务。 |
-| **6. 跑完清理掉启动的进程，不留后台** | **两地均可验证** | **arm-1 脚本验证**：<br>验证 `updater.py` 中调用 `wait_exit_then_apply_updates` 前的主进程平稳终止机制，确保未留下孤儿子进程。 | **Windows 端到端验证**：<br>1. 运行 `OneDragon.exe`；<br>2. 执行升级或直接关闭主窗口；<br>3. 检查 Windows 任务管理器，确认无残留的 `OneDragon.exe`、`Update.exe` 或 Python 宿主进程。 |
+| 验收标准 | 栏目 1：arm-1 上能验（开发机自动化） | 栏目 2：arm-1 验不了，交人类在 Windows 上验（人类可照着执行） |
+| :--- | :--- | :--- |
+| **1. `vpk pack` 一条命令产出 `Setup.exe` 与 `Portable.zip`，两者都能装/解压后启动** | 1. 运行 `ruff check src/ deploy/ tools/` 校验代码语法与规范；<br>2. 运行纯逻辑单元测试解析 `OneDragon-Portable.spec`，断言入口、datas 资源路径与依赖项；<br>3. 校验 `pyproject.toml` 锁定版本。 | **人类 Windows 验证步骤**：<br>1. 在 Windows x64 上执行 PyInstaller 构建单目录；<br>2. 执行 `vpk pack --runtime win-x64 ...`；<br>3. 验证生成 `Setup.exe`、`Portable.zip`、`RELEASES`、`releases.win.json`、`full.nupkg`；<br>4. 双击运行 `Setup.exe` 完成安装并从快捷方式拉起；解压 `Portable.zip`，双击 `OneDragon.exe` 确认正常启动。 |
+| **2. 解压到全新目录启动后，根层自动生成 `config/assets/custom/.log`，四类只读资源到位** | **单测 Mock 覆盖**：<br>编写 `tests/test_bundle_seed.py`：<br>1. Mock `sys.frozen=True`, `sys.executable="/mock/app/current/OneDragon.exe"`, `sys._MEIPASS="/mock/bundle"`;<br>2. 模拟全新空目录执行 `ensure_work_dir_ready()`；<br>3. 断言四类只读目录文件复制与 `.bundle_seed_version` 写入。 | **人类 Windows 验证步骤**：<br>1. 将 `Portable.zip` 解压至一个全新的空目录（如 `C:\TestOneDragon`）；<br>2. 启动根层 `OneDragon.exe`，等待 30–60 秒；<br>3. **断言目录**：根层自动生成 `config/`、`assets/`、`custom/`、`.log/`；<br>4. **断言文件数基准（实测值）**：检查 `assets/` 下四类只读资源文件数量：<br>   - `template`: 1820 个文件<br>   - `ui`: 10 个文件<br>   - `text`: 8 个文件<br>   - `game_data`: 178 个文件<br>5. 验证完成后结束/终止进程。 |
+| **3. 改根层 `config/project.yml` 后升级，改动保留、`current/` 被替换** | **单测 Mock 覆盖**：<br>1. 预置含用户自定义字段（如 `test_key: custom_val`）的 `config/project.yml`；<br>2. 模拟新版本环境执行 `ensure_work_dir_ready()`；<br>3. 断言用户自定义配置未被覆盖，只读资源得到更新。 | **人类 Windows 验证步骤**：<br>1. 在第 2 项生成的根层中，手动修改 `config/project.yml`（如修改代理配置或添加自定义标记行）；<br>2. 在命令行执行升级应用：<br>   `.\Update.exe apply -p <新版本-full.nupkg> --norestart`<br>3. **断言版本**：查看 `current/sq.version`，确认已变为新版本号；<br>4. **断言配置**：打开 `config/project.yml`，断言此前修改的自定义内容依然完好保留。 |
+| **4. 完整日志里不再出现「不是有效的 Git 仓库」** | **单测 Mock 覆盖**：<br>编写 `tests/test_git_service_fallback.py`：<br>1. Mock `is_velopack_mode() = True` 且工作目录无 `.git`；<br>2. 遍历调用 `is_current_branch_latest`、`fetch_total_commit`、`fetch_page_commit`、`get_current_version`、`get_head_commit_id`、`telemetry.initialize()`；<br>3. 断言日志中零次出现 `ValueError: 目录 xxx 不是有效的 Git 仓库` 且无多源重试 warning。 | **人类 Windows 验证步骤**：<br>1. 升级完成后，再次启动根层 `OneDragon.exe`；<br>2. 确认应用正常拉起并运行约 1 分钟；<br>3. 打开根层 `.log/` 目录下最新生成的日志文件；<br>4. 全文检索关键词 `不是有效的 Git 仓库`，**断言命中数为 0**。 |
+| **5. 源码模式 `python main.py` 行为与改造前一致** | **直接运行验证**：<br>1. 在 arm-1 上执行 `python3 main.py`（无 GUI 下测试入口导入与基础依赖）；<br>2. 断言 `is_velopack_mode()` 为 `False`；<br>3. 断言 `get_work_dir()` 正确解析为仓库根目录；<br>4. 执行既有测试套件 `pytest tests/` 全部通过。 | **人类 Windows 验证步骤**：<br>1. 在 Windows 机器克隆或拉取本分支源码；<br>2. 在虚拟环境中执行 `python main.py`；<br>3. 验证 GUI 正常显示，功能与改造前完全一致。 |
+| **6. 跑完清理掉启动的进程，不留后台** | **代码走查验证**：<br>验证 `updater.py` 退出调用 `wait_exit_then_apply_updates` 前的主进程清理逻辑与 `app.py::closeEvent`，确保无未挂起的后台守护线程。 | **人类 Windows 验证步骤**：<br>1. 启动 `OneDragon.exe`，执行任务或测试后正常关闭主窗口；<br>2. 打开 Windows 任务管理器，在「详细信息」中检索 `OneDragon.exe`、`Update.exe` 或 Python 宿主进程；<br>3. **断言无任何残留孤儿进程**。<br>*注：针对「点击更新按钮、查看窗口渲染」等人工交互细节，直接标为「未验证，写入交付说明供人类验收确认」。* |
 
 ---
 
