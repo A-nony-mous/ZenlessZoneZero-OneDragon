@@ -154,9 +154,20 @@ class LegacyMigrationCard(SettingCardBase):
         def _conflict_resolver(
             conflicts: list[dict[str, Any]],
         ) -> dict[str, str]:
+            # 获取实际生成的最新备份目录名称，避免给用户展示通配符
+            backup_name = "config_backup"
+            backups = [
+                d.name
+                for d in self.work_dir.iterdir()
+                if d.is_dir()
+                and d.name.startswith(legacy_migration.USER_BACKUP_DIR_PREFIX)
+            ]
+            if backups:
+                backup_name = sorted(backups)[-1]
+
             dlg = ConflictSelectionDialog(
                 conflicts=conflicts,
-                backup_dir_name="config_backup_*",
+                backup_dir_name=backup_name,
                 parent=self.window(),
             )
             dlg.exec()

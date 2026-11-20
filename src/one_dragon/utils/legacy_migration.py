@@ -178,8 +178,8 @@ def has_user_configured(work_dir: Path) -> tuple[bool, list[str]]:
     2. 存在仅用户交互才会生成的私有配置文件（如 config/game_account.yml, config/one_dragon.yml）；
     3. config/env.yml 存在且包含脱离默认值的关键配置（如 game_path 非空、代理设置已填入等）；
     4. 播种的基础配置文件（如 config/project.yml）哈希与包内模板不同；
-    5. custom/ 目录下存在用户自定义素材文件（如 custom/assets/ui/banner）。
-    （注：assets/models/ 下的模型文件为运行时/预打包下载的模型权重，不计入用户私有配置判定，避免误判）。
+    5. custom/ 目录下存在用户自定义素材文件（如 custom/assets/ui/banner）；
+    6. assets/models/ 目录下存在已下载的模型文件。
 
     Returns:
         (has_configured, reasons): 是否已修改及命中的判定原因列表。
@@ -243,9 +243,13 @@ def has_user_configured(work_dir: Path) -> tuple[bool, list[str]]:
                 reasons.append(f"custom/ 存在自定义素材: {f.name}")
                 break
 
-    # 注意：assets/models/ 下的模型文件为运行时/预打包下载的 AI 权重资源，
-    # 不属于用户私有业务配置。若将模型计入用户配置，预打包模型或静默下载将导致
-    # 首启向导被永久抑制，因此此处不把模型存在作为已配置判定依据。
+    # 6. 检查 assets/models（用户已放入或下载过模型）
+    models_dir = work_dir / "assets" / "models"
+    if models_dir.is_dir():
+        for f in models_dir.rglob("*"):
+            if f.is_file() and f.stat().st_size > 0:
+                reasons.append(f"assets/models 存在已下载模型文件: {f.name}")
+                break
 
     return len(reasons) > 0, reasons
 
@@ -532,6 +536,20 @@ def _merge_delayed_yaml_file(
     )
 
 
+def _snapshot_targets(work_dir: Path) -> dict[str, str]:
+    """计算工作根目录下 config/, custom/, assets/models/ 三个目标的所有文件的相对路径及 SHA-256。"""
+    manifest: dict[str, str] = {}
+    for sub in ("config", "custom", "assets/models"):
+        target_dir = work_dir / sub
+        if target_dir.is_dir():
+            for root, _, files in os.walk(target_dir):
+                for f in files:
+                    p = Path(root) / f
+                    rel = str(p.relative_to(work_dir)).replace("\\", "/")
+                    manifest[rel] = _compute_file_sha256(p)
+    return manifest
+
+
 def execute_migration(
     legacy_dir: Path,
     work_dir: Path,
@@ -591,6 +609,8 @@ def execute_migration(
     staging_custom.mkdir(parents=True, exist_ok=True)
     staging_models.mkdir(parents=True, exist_ok=True)
 
+    # 迁移前拍下 3 个目标（config/, custom/, assets/models/）的初始 SHA-256 快照
+    initial_targets_snapshot = _snapshot_targets(work_dir)
     backup_dir_path: Path | None = None
 
     try:
@@ -887,11 +907,23 @@ def execute_migration(
 
     except Exception as e:
         log.error("数据迁移执行失败，开始回滚原环境: %s", e, exc_info=True)
-        # 失败回退保障：若当前失败运行生成了持久备份目录，予以回滚清除以维持根层严格不变
-        if backup_dir_path and backup_dir_path.exists():
-            shutil.rmtree(backup_dir_path, ignore_errors=True)
-
         if staging_dir.exists():
             shutil.rmtree(staging_dir, ignore_errors=True)
+
+        # 校验新根层目标是否与迁移前初始状态完全一致
+        post_rollback_snapshot = _snapshot_targets(work_dir)
+        rollback_succeeded = post_rollback_snapshot == initial_targets_snapshot
+
+        if rollback_succeeded:
+            # 回滚成功：新根层已 100% 恢复，安全清理本次失败运行创建的持久备份
+            if backup_dir_path and backup_dir_path.exists():
+                shutil.rmtree(backup_dir_path, ignore_errors=True)
+            log.info("回滚校验通过：目标文件 100% 还原至迁移前状态，已清理临时备份")
+        else:
+            # 回滚本身失败（换不回来或校验不一致）：保留备份作为最后的安全网
+            log.error(
+                "回滚校验失败：工作区与迁移前状态不一致！已保留安全网备份目录: %s",
+                backup_dir_path.name if backup_dir_path else "未知",
+            )
 
         raise
