@@ -300,8 +300,9 @@ except Exception:
 
 # 初始化应用程序，并启动主窗口
 def main() -> None:
-    init_velopack()
-    ensure_work_dir_ready()
+    if _init_error is None:
+        init_velopack()
+        ensure_work_dir_ready()
 
     if _init_error is not None:
         # 显示错误弹窗，询问用户是否打开排障文档

@@ -98,12 +98,17 @@ jobs:
       env:
         RELEASE_VERSION: ${{ needs.version.outputs.version }}
         CREATE_RELEASE: ${{ env.CREATE_RELEASE }}
+        SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+        SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+        SIGNPATH_PROJECT_SLUG: 'ZenlessZoneZero-OneDragon'
+        SIGNPATH_SIGNING_POLICY_SLUG: 'release-signing'
       run: |
         $semver = $env:RELEASE_VERSION.TrimStart('v')
         $releasesDir = "deploy\dist\releases"
         New-Item -ItemType Directory -Path $releasesDir -Force
 
         if ($env:CREATE_RELEASE -eq 'true') {
+          Install-Module -Name SignPath -Scope CurrentUser -Force -Repository PSGallery -ErrorAction SilentlyContinue
           vpk pack `
             --packId "ZenlessZoneZero-OneDragon" `
             --packVersion "$semver" `
@@ -113,7 +118,7 @@ jobs:
             --runtime win-x64 `
             --packTitle "ZenlessZoneZero-OneDragon" `
             --packAuthors "OneDragon-Anything" `
-            --signTemplate "signtool.exe sign /td sha256 /fd sha256 /a /tr http://timestamp.digicert.com {{file}}" `
+            --signTemplate "pwsh -File tools/ci/sign_file.ps1 {{file}}" `
             --outputDir $releasesDir
         } else {
           vpk pack `
@@ -155,12 +160,60 @@ jobs:
     needs:
       - version
       - build
-    if: ${{ env.CREATE_RELEASE == 'true' }}
+    if: ${{ env.CREATE_RELEASE == 'true' && needs.build.result == 'success' }}
     steps:
-      - name: Verify signing status
+      - name: Download releases
+        uses: actions/download-artifact@v4
+        with:
+          name: releases
+          path: deploy/dist/releases
+
+      - name: Verify authenticode signatures
         shell: pwsh
         run: |
-          Write-Host "Velopack package signed via vpk pack --signTemplate."
+          $releasesDir = "deploy\dist\releases"
+          $setupExe = Join-Path $releasesDir "ZenlessZoneZero-OneDragon-Setup.exe"
+          $portableZip = Join-Path $releasesDir "ZenlessZoneZero-OneDragon-win-Portable.zip"
+
+          if (-not (Test-Path $setupExe)) {
+              throw "Setup.exe not found at $setupExe"
+          }
+          if (-not (Test-Path $portableZip)) {
+              throw "Portable.zip not found at $portableZip"
+          }
+
+          $tempExtract = Join-Path $env:RUNNER_TEMP "portable_check"
+          if (Test-Path $tempExtract) { Remove-Item -Path $tempExtract -Recurse -Force }
+          Expand-Archive -Path $portableZip -DestinationPath $tempExtract -Force
+
+          $oneDragonExe = Get-ChildItem -Path $tempExtract -Filter "OneDragon.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
+          $updateExe = Get-ChildItem -Path $tempExtract -Filter "Update.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
+
+          if (-not $oneDragonExe -or -not (Test-Path $oneDragonExe)) {
+              throw "OneDragon.exe not found inside $portableZip"
+          }
+          if (-not $updateExe -or -not (Test-Path $updateExe)) {
+              throw "Update.exe not found inside $portableZip"
+          }
+
+          $targets = @($setupExe, $oneDragonExe, $updateExe)
+          $failed = $false
+
+          foreach ($target in $targets) {
+              $sig = Get-AuthenticodeSignature -FilePath $target
+              Write-Host "Authenticode check [$target]: Status=$($sig.Status), Subject=$($sig.SignerCertificate.Subject)"
+              if ($sig.Status -ne 'Valid') {
+                  Write-Error "Signature validation FAILED for $target. Expected 'Valid', got '$($sig.Status)'."
+                  $failed = $true
+              }
+          }
+
+          if ($failed) {
+              Write-Error "One or more release executables are not signed with a Valid Authenticode signature."
+              exit 1
+          }
+
+          Write-Host "All release executables (Setup.exe, OneDragon.exe, Update.exe) verified successfully."
 
   release:
     runs-on: windows-latest
@@ -168,7 +221,7 @@ jobs:
       - version
       - build
       - sign
-    if: ${{ env.CREATE_RELEASE == 'true' && needs.build.result == 'success' }}
+    if: ${{ env.CREATE_RELEASE == 'true' && needs.build.result == 'success' && needs.sign.result == 'success' }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4

@@ -74,6 +74,7 @@ def get_velopack_root() -> Path | None:
     """获取 Velopack 根目录。
 
     sys.executable 的父目录名为 current 且其上级有 Update.exe 或 .portable 时返回该上级；否则 None。
+    标记缺失时打 log.warning 提示降级风险。
     """
     try:
         exe_path = Path(sys.executable).resolve()
@@ -82,6 +83,9 @@ def get_velopack_root() -> Path | None:
             root = parent.parent
             if (root / 'Update.exe').exists() or (root / '.portable').exists():
                 return root
+            from one_dragon.utils.log_utils import log
+
+            log.warning('检测到 current 运行目录，但未找到 Update.exe 或 .portable 标记，处于降级运行状态')
     except Exception:
         pass
     return None
@@ -111,8 +115,9 @@ def set_work_dir(work_dir: str | Path | None) -> None:
 def get_work_dir() -> str:
     """返回稳定的项目工作目录。
 
-    显式设置的目录优先；冻结运行时先尝试取 Velopack 根目录，
-    命中返回它，否则返回可执行文件所在目录；
+    显式设置的目录优先；
+    父目录名为 current 时，无条件取 parent.parent 作为工作根目录，保证工作目录在任何情况下都不会落到 current/ 里；
+    其他冻结运行时先尝试取 Velopack 根目录，命中返回它，否则返回可执行文件所在目录；
     源码运行时根据当前文件位置推导项目根目录。
 
     Returns:
@@ -121,6 +126,13 @@ def get_work_dir() -> str:
     if _work_dir is not None:
         return str(_work_dir)
     if run_in_exe() or getattr(sys, 'frozen', False):
+        try:
+            exe_path = Path(sys.executable).resolve()
+            parent = exe_path.parent
+            if parent.name.lower() == 'current':
+                return str(parent.parent)
+        except Exception:
+            pass
         vpk_root = get_velopack_root()
         if vpk_root is not None:
             return str(vpk_root)

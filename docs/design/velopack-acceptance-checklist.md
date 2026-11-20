@@ -168,7 +168,7 @@ Test-Path .\deploy\dist\releases\releases.win.json
 
    期望：5 行全部为 `True`。
 
-4. 断言四类只读资源文件数（数字取自设计文档第 5 节；如果仓库资源在改造期间有增删，记录实际值并说明）：
+4. 断言四类只读资源文件数（四类只读目录 `assets/template`、`assets/ui`、`assets/text`、`assets/game_data` 升级时由包内版本整体覆盖，请勿手工修改；数字取自设计文档第 5 节；如果仓库资源在改造期间有增删，记录实际值并说明）：
 
    ```powershell
    (Get-ChildItem -Path .\assets\template -Recurse -File).Count      # 期望 1820

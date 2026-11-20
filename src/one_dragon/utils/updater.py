@@ -13,6 +13,8 @@ def is_supported() -> bool:
 
 def init_velopack() -> None:
     """初始化 Velopack 生命周期。必须在应用最早期调用。"""
+    if not is_supported():
+        return
     try:
         import velopack
 
@@ -70,11 +72,17 @@ def get_update_source(project_config: Any = None) -> Any:
     return GithubSource(github_homepage, prerelease=is_beta)
 
 
-def check_for_updates() -> Any | None:
+def check_for_updates(project_config: Any = None) -> Any | None:
     """检查是否有可用更新。
 
+    Args:
+        project_config: 项目配置对象（包含 update_source_url / github_homepage）。
+
     Returns:
-        有更新时返回 UpdateInfo，否则返回 None。
+        有更新时返回 UpdateInfo，当前已是最新时返回 None。
+
+    Raises:
+        Exception: 检查失败时抛出异常，以便调用方区分“无更新”与“检查失败”。
     """
     if not is_supported():
         return None
@@ -82,23 +90,25 @@ def check_for_updates() -> Any | None:
     try:
         from velopack import UpdateManager
 
-        source = get_update_source()
+        source = get_update_source(project_config)
         um = UpdateManager(source)
         return um.check_for_updates()
     except Exception:
         log.warning("检查 Velopack 更新失败", exc_info=True)
-        return None
+        raise
 
 
 def download_updates(
     update_info: Any,
     callback: Callable[[int], None] | None = None,
+    project_config: Any = None,
 ) -> None:
     """仅下载更新包。
 
     Args:
         update_info: check_for_updates 返回的更新信息对象。
         callback: 下载进度回调函数，入参为 0-100 的整数百分比。
+        project_config: 项目配置对象。
     """
     if not is_supported():
         return
@@ -106,7 +116,7 @@ def download_updates(
     try:
         from velopack import UpdateManager
 
-        source = get_update_source()
+        source = get_update_source(project_config)
         um = UpdateManager(source)
         um.download_updates(update_info, progress_callback=callback)
     except Exception:
@@ -117,12 +127,14 @@ def download_updates(
 def apply_updates(
     update_info: Any,
     restart: bool = True,
+    project_config: Any = None,
 ) -> None:
     """应用已下载的更新包（退出当前进程后生效）。
 
     Args:
         update_info: check_for_updates 返回的更新信息对象。
         restart: 更新完成后是否重启应用。
+        project_config: 项目配置对象。
     """
     if not is_supported():
         return
@@ -130,7 +142,7 @@ def apply_updates(
     try:
         from velopack import UpdateManager
 
-        source = get_update_source()
+        source = get_update_source(project_config)
         um = UpdateManager(source)
         um.wait_exit_then_apply_updates(update_info, restart=restart)
     except Exception:
@@ -142,6 +154,7 @@ def download_and_apply(
     update_info: Any,
     callback: Callable[[int], None] | None = None,
     restart: bool = True,
+    project_config: Any = None,
 ) -> None:
     """下载并应用更新。
 
@@ -149,6 +162,7 @@ def download_and_apply(
         update_info: check_for_updates 返回的更新信息对象。
         callback: 下载进度回调函数，入参为 0-100 的整数百分比。
         restart: 更新完成后是否重启应用。
+        project_config: 项目配置对象。
     """
-    download_updates(update_info, callback=callback)
-    apply_updates(update_info, restart=restart)
+    download_updates(update_info, callback=callback, project_config=project_config)
+    apply_updates(update_info, restart=restart, project_config=project_config)

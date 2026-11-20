@@ -15,7 +15,6 @@ from enum import StrEnum
 from pathlib import Path
 
 import psutil
-import yaml
 from packaging import version
 from pygit2 import (
     Blob,
@@ -34,10 +33,6 @@ from pygit2.enums import CheckoutStrategy, ConfigLevel, ResetMode, SortMode
 from one_dragon.base.config.config_item import ConfigItem
 from one_dragon.envs.env_config import EnvConfig
 from one_dragon.envs.repo_config import RepoConfig, RepositoryItem
-from one_dragon.envs.runtime_compatibility import (
-    check_manifest_compatible,
-    load_runtime_manifest,
-)
 from one_dragon.utils import os_utils
 from one_dragon.utils.i18_utils import gt
 from one_dragon.utils.log_utils import log
@@ -1394,88 +1389,7 @@ class GitService:
         except (KeyError, ValueError):
             return None
 
-    # ================== 模块清单检查 ==================
 
-    def _check_manifest_compatible(self, target_oid: Oid) -> tuple[bool, str]:
-        """读取目标提交的清单，调用运行时兼容性检查。
-
-        没有可用的运行时打包清单时跳过检查。
-        本地清单可用时，目标 project.yml 缺少有效 manifest_path、目标清单读取失败或检查异常都阻止更新。
-
-        Args:
-            target_oid: 目标提交 OID
-
-        Returns:
-            (是否兼容, 提示消息)
-        """
-        local_manifest = load_runtime_manifest()
-        if local_manifest is None:
-            return True, ''
-
-        # 从目标 commit 的 project.yml 获取清单路径
-        manifest_git_path = self._get_manifest_path_from_commit(target_oid)
-        if not manifest_git_path:
-            log.warning(f'目标版本缺少有效模块清单路径，阻止代码更新。目标: {str(target_oid)[:7]}')
-            return False, gt('目标版本的运行环境与当前不兼容')
-
-        # 读取目标 commit 中的 manifest
-        remote_manifest = self._get_file_at_commit(target_oid, manifest_git_path)
-        if remote_manifest is None:
-            log.warning(f'目标版本模块清单读取失败，阻止代码更新。目标: {str(target_oid)[:7]}')
-            return False, gt('目标版本的运行环境与当前不兼容')
-
-        try:
-            compatible = check_manifest_compatible(local_manifest, remote_manifest)
-        except Exception:
-            log.warning(f'检查模块清单时出错，阻止代码更新。目标: {str(target_oid)[:7]}', exc_info=True)
-            return False, gt('目标版本的运行环境与当前不兼容')
-
-        if not compatible:
-            log.warning(f'运行环境不兼容，阻止代码更新。目标: {str(target_oid)[:7]}')
-            return False, gt('目标版本的运行环境与当前不兼容')
-
-        return True, ''
-
-    def _get_manifest_path_from_commit(self, commit_oid: Oid) -> str | None:
-        """从指定 commit 的 project.yml 中读取 manifest_path
-
-        Args:
-            commit_oid: 目标提交 OID
-
-        Returns:
-            清单文件的仓库路径，读取失败时返回 None
-        """
-        raw = self._get_file_at_commit(commit_oid, 'config/project.yml')
-        if raw is None:
-            return None
-        try:
-            data = yaml.safe_load(raw)
-            path = data.get('manifest_path') if isinstance(data, dict) else None
-            return path if isinstance(path, str) and path else None
-        except Exception:
-            return None
-
-    def _check_remote_manifest_compatible(self) -> tuple[bool, str]:
-        """检查远程分支的模块清单是否与当前运行环境兼容
-
-        封装远程 OID 解析 + 清单比对；本地清单可用时，检查异常阻止更新。
-
-        Returns:
-            (是否兼容, 提示消息)
-        """
-        remote_ref = f'refs/remotes/{self.env_config.git_remote}/{self.env_config.git_branch}'
-        try:
-            repo = self._open_repo()
-            if remote_ref not in repo.references:
-                return True, ''
-            remote_oid = repo.references[remote_ref].target
-            return self._check_manifest_compatible(remote_oid)
-        except Exception:
-            if load_runtime_manifest() is None:
-                log.warning('检查模块清单时出错，跳过检查', exc_info=True)
-                return True, ''
-            log.warning('检查模块清单时出错，阻止代码更新', exc_info=True)
-            return False, gt('目标版本的运行环境与当前不兼容')
 
     def _checkout_branch(self) -> tuple[GitSyncStatus, bool, str]:
         """切换到目标分支，并返回是否发生了分支切换。"""
@@ -1597,14 +1511,6 @@ class GitService:
                 return GitSyncStatus.BUILTIN_TAG_UNAVAILABLE, gt('暂时无法获取当前版本所需文件')
             return fetch_status, message
 
-        if initial_tag is None:
-            if progress_callback:
-                progress_callback(3 / 6, gt('检查运行环境兼容性'))
-
-            compatible, message = self._check_remote_manifest_compatible()
-            if not compatible:
-                return GitSyncStatus.RUNTIME_INCOMPATIBLE, message
-
         if progress_callback:
             progress_callback(4 / 6, gt('切换到目标分支'))
 
@@ -1637,13 +1543,6 @@ class GitService:
         fetch_status, message = self._fetch_remote(progress_callback, 1 / 6, 2 / 6)
         if fetch_status is not GitSyncStatus.SUCCESS:
             return fetch_status, message
-
-        if progress_callback:
-            progress_callback(2 / 6, gt('检查运行环境兼容性'))
-
-        compatible, message = self._check_remote_manifest_compatible()
-        if not compatible:
-            return GitSyncStatus.RUNTIME_INCOMPATIBLE, message
 
         if progress_callback:
             progress_callback(3 / 6, gt('检查工作区状态'))
@@ -1770,7 +1669,7 @@ class GitService:
         """
         获取commit的总数。获取失败时返回0
         """
-        if os_utils.is_velopack_mode() or not self.check_repo_exists():
+        if os_utils.is_velopack_mode():
             return 0
 
         log.info(gt('获取commit总数'))
@@ -1787,7 +1686,7 @@ class GitService:
         Returns:
             GitLog列表
         """
-        if os_utils.is_velopack_mode() or not self.check_repo_exists():
+        if os_utils.is_velopack_mode():
             return []
 
         log.info(f"{gt('获取commit')} 第{page_num + 1}页")
@@ -1815,7 +1714,7 @@ class GitService:
         """
         更新remote
         """
-        if os_utils.is_velopack_mode() or not self.check_repo_exists():
+        if os_utils.is_velopack_mode():
             return
 
         try:
@@ -1825,7 +1724,7 @@ class GitService:
 
     def reset_to_commit(self, commit_id: str) -> tuple[bool, str]:
         """
-        回滚到特定commit，会先检查模块清单兼容性
+        回滚到特定commit
 
         Returns:
             (是否成功, 提示消息)
@@ -1840,10 +1739,6 @@ class GitService:
         except Exception:
             log.error(f'解析提交ID失败: {commit_id}', exc_info=True)
             return False, gt('解析提交ID失败')
-
-        compatible, msg = self._check_manifest_compatible(target_oid)
-        if not compatible:
-            return False, msg
 
         if self._reset_hard(target_oid):
             return True, ''

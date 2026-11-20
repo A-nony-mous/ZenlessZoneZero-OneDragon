@@ -40,14 +40,6 @@ powershell -File skills/new-config/compile-po.ps1
 
 运行 `src/one_dragon/devtools/compile_po.py`。
 
-### generate-manifest.ps1 — 生成模块清单
-
-```powershell
-powershell -File skills/new-config/generate-manifest.ps1
-```
-
-运行 `deploy/generate_module_manifest.py`。
-
 ### 空运行
 
 所有脚本支持 `-DryRun` 参数，只输出环境信息不执行：

@@ -13,6 +13,7 @@ class ProjectConfig(YamlConfig):
         self.project_name = self.get('project_name')
         self.python_version = self.get('python_version')
         self.github_homepage = self.get('github_homepage')
+        self.update_source_url = self.get('update_source_url', '')
         self.env_archive_name = f'{self.project_name}-Environment.zip'
         self.game_executable_name = self.get('game_executable_name', '')
 

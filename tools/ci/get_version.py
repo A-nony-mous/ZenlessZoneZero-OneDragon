@@ -55,9 +55,10 @@ def main() -> int:
 
         pr_match = re.match(r'^refs/pull/(\d+)/', github_ref)
         if pr_match:
-            version = f"pr{pr_match.group(1)}+{short_hash}"
+            pr_num = str(int(pr_match.group(1)))
+            version = f"0.0.0-pr.{pr_num}.g{short_hash}"
         else:
-            version = f"dev+{short_hash}"
+            version = f"0.0.0-dev.g{short_hash}"
 
     tag_name = version if version.startswith('v') else f"v{version}"
     semver_version = version.removeprefix('v')
