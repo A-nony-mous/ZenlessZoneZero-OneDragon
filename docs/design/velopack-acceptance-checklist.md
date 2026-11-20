@@ -1,6 +1,6 @@
 # Velopack 分布式交付 Windows 人工验收清单
 
-- 关联 Issue：PLAY-2 / PLAY-5 / PLAY-8
+- 关联 Issue：PLAY-2 / PLAY-5 / PLAY-8 / PLAY-10
 - 依据：`docs/design/velopack-distribution.md` 第 5 节验证矩阵「栏目 2：交人类在 Windows 上验」
 - 目标分支：`feat/velopack`
 - 适用环境：Windows 10 / 11 x64，已安装 Git、uv、.NET SDK（用于安装 `vpk`）
@@ -181,7 +181,16 @@ Test-Path .\deploy\dist\releases\releases.win.json
 
 ### 4.1 三个 exe 的 Authenticode 签名验证（B1 / 验收标准 1）
 
-> 前提：只有 `CREATE_RELEASE == 'true'` 且注入了 `SIGNPATH_*` secrets 的构建才会走 `vpk pack --signTemplate "pwsh -File tools/ci/sign_file.ps1 {{file}}"`。本地无凭据构建产出未签名产物是预期行为；**发布形态必须三个 exe 全部 `Valid`**。CI 的 `sign` job 已经对这三个文件做同样的断言，任一不是 `Valid` 就 `exit 1`，不允许出现「`sign` 绿但产物没签」的情况。
+> 前提：只有 `CREATE_RELEASE == 'true'` 且注入了 `SIGNPATH_*` secrets 的构建才会走 `vpk pack --signTemplate 'pwsh -File tools/ci/sign_file.ps1 "{{file}}"'`。本地无凭据构建产出未签名产物是预期行为；**发布形态必须三个 exe 全部 `Valid`**。CI 的 `sign` job 已经对这三个文件做同样的断言，任一不是 `Valid` 就 `exit 1`，不允许出现「`sign` 绿但产物没签」的情况。
+>
+> **签名脚本的两种提交形态（B1-a，第 2 轮返工）**：`tools/ci/sign_file.ps1` 按是否设置 `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG` 走两条路径，验证前先确认实际走了哪条：
+>
+> | 环境变量 | 提交形态 | SignPath 侧要求 |
+> | :--- | :--- | :--- |
+> | 未设置（**当前 workflow 就是这个形态**） | 把单个文件压成 zip，用项目默认 artifact configuration 提交，下载后解压取回同名文件 | SignPath 项目要有能接受 zip 的默认 artifact configuration |
+> | 设置了 slug | 直接提交裸 exe，并带 `-ArtifactConfigurationSlug <slug>` | SignPath 项目要配好对应的 artifact configuration slug |
+>
+> 两种形态在覆盖原文件前都会校验「扩展名一致 + PE 头是 `MZ`」，候选文件是 zip 或无效二进制时**拒绝覆盖**并抛错，`vpk pack` 会因此失败。这个保护是预期的，不要为了签过而放宽它。
 
 ```powershell
 $releases = ".\deploy\dist\releases"
@@ -223,6 +232,43 @@ Write-Host '三个 exe 签名均为 Valid'
 
 常见非通过状态及含义：`NotSigned`（`--signTemplate` 没挂上或 secrets 未注入）、`HashMismatch`（签名后文件又被改写）、`UnknownError`（时间戳服务不可达）。这几种都算失败，要贴原始 `Status` 回 Issue。
 
+### 4.3 nupkg 内 exe 的签名核验（B1-c，第 2 轮返工）
+
+> 第 2 轮返工把 CI 的签名门禁从「只看 `Portable.zip`」扩到「同时解压 `*-full.nupkg` 逐个校验」。增量更新走的就是 nupkg 内的二进制，包内 `Update.exe` / `OneDragon.exe` 没签等于更新后仍然被拦截，所以这一步不能省。
+
+```powershell
+$releases = ".\deploy\dist\releases"
+$nupkgDir = Join-Path $env:TEMP "OneDragon-NupkgSignCheck"
+Remove-Item -Recurse -Force $nupkgDir -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $nupkgDir | Out-Null
+
+$checked = @()
+foreach ($nupkg in Get-ChildItem $releases -Filter "*-full.nupkg") {
+  $dest = Join-Path $nupkgDir $nupkg.BaseName
+  Expand-Archive -Path $nupkg.FullName -DestinationPath $dest -Force
+  $exes = Get-ChildItem -Path $dest -Recurse -File |
+    Where-Object { $_.Name -in @('OneDragon.exe', 'Update.exe') }
+  if (-not ($exes | Where-Object { $_.Name -eq 'OneDragon.exe' })) {
+    Write-Host "nupkg 内缺少 OneDragon.exe: $($nupkg.Name)"; exit 1
+  }
+  $checked += $exes
+}
+
+$checked | ForEach-Object {
+  $sig = Get-AuthenticodeSignature -FilePath $_.FullName
+  [PSCustomObject]@{ PackageFile = $_.Name; Status = $sig.Status; Signer = $sig.SignerCertificate.Subject }
+}
+
+$bad = $checked | Where-Object { (Get-AuthenticodeSignature -FilePath $_.FullName).Status -ne 'Valid' }
+if ($bad) {
+  $bad | ForEach-Object { Write-Host "nupkg 内签名无效: $($_.FullName)" }
+  exit 1
+}
+Write-Host 'nupkg 内所有 OneDragon.exe / Update.exe 签名均为 Valid'
+```
+
+期望：每个 `*-full.nupkg` 内都能找到 `OneDragon.exe`，列出的每一行 `Status` 都是 `Valid`，最后一行输出「nupkg 内所有 OneDragon.exe / Update.exe 签名均为 Valid」，退出码 0。注意 `Update.exe` 在包内可能有多份（`current\` 与根层），要全部为 `Valid`，不能只看其中一份。
+
 ## 5. 便携版解压启动与首启播种（对应验收标准 2）
 
 1. 解压便携包到**全新空目录**（示例 `C:\TestOneDragon`，目录必须不存在或为空）：
@@ -244,7 +290,7 @@ Write-Host '三个 exe 签名均为 Valid'
 
    等待 30–60 秒完成首启播种，让主窗口出现。
 
-3. 断言根层目录生成：
+3. 断言根层目录与播种标记生成：
 
    ```powershell
    cd C:\TestOneDragon
@@ -253,9 +299,12 @@ Write-Host '三个 exe 签名均为 Valid'
    Test-Path .\custom
    Test-Path .\.log
    Test-Path .\.bundle_seed_version
+   Test-Path .\.bundle_seed_status.json
    ```
 
-   期望：5 行全部为 `True`。
+   期望：6 行全部为 `True`。
+
+   `.bundle_seed_status.json` 是第 2 轮返工新增的**按目录**播种版本记录（`{"template": "0.1.0-beta.1", "ui": ..., "text": ..., "game_data": ...}`）；根层 `.bundle_seed_version` 仍然只在四类目录全部成功后才写。两个文件都要在，缺前者说明播种逻辑回退了。
 
 4. 断言四类只读资源文件数（S4）：
 
@@ -271,16 +320,72 @@ Write-Host '三个 exe 签名均为 Valid'
 5. 记录版本标记内容备用：
 
    ```powershell
+   cd C:\TestOneDragon
    Get-Content .\.bundle_seed_version
+   Get-Content .\.bundle_seed_status.json
    ```
 
-   期望：文件内容非空。
+   期望：`.bundle_seed_version` 内容非空且等于 `current\sq.version`；`.bundle_seed_status.json` 的四个键（`template` / `ui` / `text` / `game_data`）值都与它相同。
 
 6. 关闭应用：
 
    ```powershell
    Get-Process OneDragon -ErrorAction SilentlyContinue | Stop-Process -Force
    ```
+
+### 5.1 播种失败时的降级、告警与按目录重试（N1/N3，可选负向验证）
+
+> 这是第 2 轮返工新增行为的负向验证，**不是交付门禁**：正常升级走不到这些分支。能跑就跑，跑不了在记录表里写「未执行 + 原因」，不要凭代码推断通过。
+
+**场景 A：残留临时目录清理（N3）**
+
+1. 在解压目录里手工造两个本机制自己的残留目录，再放一个「无辜」目录当对照：
+
+   ```powershell
+   cd C:\TestOneDragon
+   New-Item -ItemType Directory -Force .\assets\.template.new-1a2b3c4d-0 | Out-Null
+   New-Item -ItemType Directory -Force .\assets\.ui.old-deadbeef | Out-Null
+   New-Item -ItemType Directory -Force .\assets\template_backup | Out-Null
+   Set-Content .\assets\template_backup\keep.txt 'keep'
+   ```
+
+2. 启动应用一次（同第 5 节第 2 步），等播种完成后关闭。
+
+3. 断言：
+
+   ```powershell
+   cd C:\TestOneDragon
+   Test-Path .\assets\.template.new-1a2b3c4d-0   # 期望 False
+   Test-Path .\assets\.ui.old-deadbeef          # 期望 False
+   Test-Path .\assets\template_backup\keep.txt   # 期望 True（不能误删）
+   ```
+
+**场景 B：单个目录播种失败的 InfoBar 与重试（N1）**
+
+1. 用另一个进程独占打开 `assets\template` 下的一个文件，让升级时目录交换失败：
+
+   ```powershell
+   $lock = [System.IO.File]::Open('C:\TestOneDragon\assets\template\template.txt', 'Open', 'Read', 'None')
+   ```
+
+2. 保持锁不释放，把应用升级到下一个包版本（同第 6 节第 3 步）并启动。
+
+3. 期望：
+   - 应用**正常启动**，不闪退；
+   - 右上方出现一次「资源更新失败（template）」的黄色 InfoBar，提示查看 `.log\`；
+   - `Get-Content .\.bundle_seed_version` 仍是**升级前**的版本；
+   - `.bundle_seed_status.json` 里 `template` 仍是升级前版本，其他三类已前进到新版本；
+   - `assets\template` 里原有的用户文件还在（没有被先清空）；
+   - `.log\` 里有「复制只读资源目录失败: template」的堆栈。
+4. 关闭应用，释放锁，再启动一次。
+
+5. 期望：本次只重试 `template`（其他目录版本已匹配，不应重复复制），成功后 `.bundle_seed_version` 与 `.bundle_seed_status.json` 全部变为新版本，InfoBar 不再出现。
+
+```powershell
+$lock.Close(); $lock.Dispose()
+```
+
+> 如果 Windows 上目录交换没有被锁影响（Velopack 先替换 `current\` 而根层文件锁不阻止同级目录 rename），这条负向场景可能跑不出来：把实际现象和锁的形态原样记进记录表，不要改代码迁就。
 
 ## 6. 就地升级：用户配置保留、current 被替换（对应验收标准 3）
 
@@ -378,6 +483,8 @@ Write-Host '三个 exe 签名均为 Valid'
    Select-String -Path .\assets\ui\ui.txt -Pattern 'patched by hand'   # 期望无输出
    Select-String -Path .\config\project.yml -Pattern '^doc_link:'       # 期望能查到
    Select-String -Path .\config\project.yml -Pattern 'test_custom_marker'  # 期望仍能查到
+   Get-Content .\.bundle_seed_status.json                              # 期望四项都是 0.1.0-beta.2
+   Get-Content .\.bundle_seed_version                                  # 期望 0.1.0-beta.2
    ```
 
    期望：
@@ -436,13 +543,14 @@ Write-Host '三个 exe 签名均为 Valid'
 以下三项设计文档第 5 节已明确标注「未验证，写入交付说明供人类验收确认」，本清单不把它们算作通过：
 
 1. **点界面的「检查更新」按钮**：完整走一遍「发现新版本 → 下载 → 进度 → 立即重启/下次启动应用」的 UI 交互，确认按钮可用、状态流转正确、错误提示可重试。本清单第 6 节只验证了命令行 `Update.exe apply` 的就地升级，没有覆盖应用内更新 UI。
-2. **窗口渲染**：主窗口、各页面、更新提示浮层的实际渲染效果（布局、字体、深浅色主题、高 DPI）是否符合设计要求。
-3. **`Setup.exe` 安装向导**：双击 `Setup.exe` 走完安装流程（安装目录选择、快捷方式、首次启动、卸载），确认与便携版行为一致。
+2. **首页检查更新的 10 分钟冷却与失败退避（N4）**：自动检查在切回首页时触发、刻意隐藏了时间戳，人工只能通过「短时间内反复切回首页不应反复发起检查」间接观察，无法逐档验证 600/1200/2400/4800/7200 秒的退避阶梯；这部分由单测覆盖，不在本清单断言。
+3. **窗口渲染**：主窗口、各页面、更新提示浮层的实际渲染效果（布局、字体、深浅色主题、高 DPI）是否符合设计要求。
+4. **`Setup.exe` 安装向导**：双击 `Setup.exe` 走完安装流程（安装目录选择、快捷方式、首次启动、卸载），确认与便携版行为一致。
 
 另外，以下项在 arm-1 上同样无法验证，需要人类或 CI 环境确认，不算本清单通过：
 
 - `vpk pack`、PyInstaller 冻结构建本身是否成功（arm-1 是 Linux，无法执行）。
-- SignPath 签名后的三个 exe 是否都带合法签名（Windows 上用第 4.1 节的 `Get-AuthenticodeSignature` 核查；arm-1 上只能确认 workflow 与 `sign_file.ps1` 的代码路径，不能执行签名）。
+- SignPath 签名后的三个 exe 是否都带合法签名（Windows 上用第 4.1 节与第 4.3 节核查；arm-1 上只能确认 workflow 与 `sign_file.ps1` 的代码路径，不能执行签名）。
 - 离线模型包 `ZenlessZoneZero-OneDragon-Models.zip` 解压到根层后离线可用。
 - CNB 镜像同步 `RELEASES` / `releases.win.json` / `.nupkg` 是否完整。
 
@@ -456,10 +564,12 @@ Write-Host '三个 exe 签名均为 Valid'
 | 4 | 产物断言 | `Setup.exe` / `win-Portable.zip` / `RELEASES` / `releases.win.json` / 两个 nupkg 齐全 | | | |
 | 4.1 | 签名验证（B1） | `Setup.exe` / `OneDragon.exe` / `Update.exe` 的 `Get-AuthenticodeSignature` 全为 `Valid` | | | |
 | 4.2 | 非发布版本号（S5） | PR 构建为 `0.0.0-pr.<n>.g<sha>`，分支构建为 `0.0.0-dev.g<sha>`，匹配 SemVer2 | | | |
-| 5 | 便携版首启播种 | `config` / `assets` / `custom` / `.log` / `.bundle_seed_version` 存在，四类资源计数 1820/10/8/178 | | | |
+| 4.3 | nupkg 内 exe 签名（B1-c） | 每个 `*-full.nupkg` 内的 `OneDragon.exe` / `Update.exe` 全部 `Valid` | | | |
+| 5 | 便携版首启播种 | `config` / `assets` / `custom` / `.log` / `.bundle_seed_version` / `.bundle_seed_status.json` 存在，四类资源计数 1820/10/8/178，两个版本文件内容一致 | | | |
+| 5.1 | 残留清理与失败重试（N1/N3） | 残留 `.new-*` / `.old-*` 被清且不误删其他目录；播种失败时应用不崩、出现一次 InfoBar、版本标记不前进、恢复后只重试失败目录 | | | 可选负向验证 |
 | 6 | 就地升级 | `current\sq.version` 为 `0.1.0-beta.2`，`config\project.yml` 的 `test_custom_marker` 保留 | | | |
 | 7 | 日志检索 | 「不是有效的 Git 仓库」计数 0，「尝试下一个代码源」计数 0 | | | |
-| 7.1 | S4 覆盖与合并 | 只读资源残留被清、手工改动被盖回；`doc_link` 被补齐、`test_custom_marker` 保留 | | | |
+| 7.1 | S4 覆盖与合并 | 只读资源残留被清、手工改动被盖回；`doc_link` 被补齐、`test_custom_marker` 保留；`.bundle_seed_status.json` 四项都为 `0.1.0-beta.2` | | | |
 | 8 | 源码模式 | `is_velopack_mode()` 为 `False`，`get_work_dir()` 为仓库根目录，GUI 正常 | | | |
 | 9 | 进程清理 | 退出后无 `OneDragon` / `Update` 残留进程 | | | |
 | 10 | 未验证项 | 应用内检查更新 UI / 窗口渲染 / `Setup.exe` 安装向导 | | | 需人类单独确认 |
