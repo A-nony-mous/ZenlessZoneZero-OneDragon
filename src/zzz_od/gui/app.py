@@ -1,6 +1,20 @@
-try:
-    import sys
+import contextlib
+import ctypes
+import sys
+import traceback
+import webbrowser
+from pathlib import Path
 
+# 资源播种、更新生命周期与日志基础能力，必须在主应用与 GUI 模块导入前解耦准备就绪
+from one_dragon.utils import bundle_seed, os_utils
+from one_dragon.utils.bundle_seed import ensure_work_dir_ready, get_seed_status_text
+from one_dragon.utils.log_utils import log
+from one_dragon.utils.updater import init_velopack
+
+_init_error: str | None = None
+stack_trace: str = ""
+
+try:
     from PySide6.QtCore import Qt, QThread, QTimer, Signal
     from PySide6.QtGui import QCloseEvent
     from PySide6.QtWidgets import QApplication
@@ -13,19 +27,14 @@ try:
     )
 
     from one_dragon.base.operation.one_dragon_context import ContextInstanceEventEnum
-    from one_dragon.utils import app_utils, os_utils
-    from one_dragon.utils.bundle_seed import ensure_work_dir_ready
+    from one_dragon.utils import app_utils
     from one_dragon.utils.i18_utils import gt
-    from one_dragon.utils.log_utils import log
-    from one_dragon.utils.updater import init_velopack
     from one_dragon_qt.overlay.overlay_manager import OverlayManager
     from one_dragon_qt.services.styles_manager import OdQtStyleSheet
     from one_dragon_qt.view.context_event_signal import ContextEventSignal
     from one_dragon_qt.windows.main_app_window_base import MainAppWindowBase
     from one_dragon_qt.windows.window import PhosTitleBar
     from zzz_od.context.zzz_context import ZContext
-
-    _init_error = None
 
 
     class CtxInitRunner(QThread):
@@ -315,30 +324,85 @@ try:
                 self.overlay_manager.shutdown()
 
 except Exception:
-    import ctypes
-    import traceback
-    import webbrowser
-
     stack_trace = traceback.format_exc()
     _init_error = f"启动一条龙失败，报错信息如下:\n{stack_trace}"
 
 
+def _record_startup_error(stack_trace_str: str, seed_status_str: str) -> None:
+    """在模块导入失败路径上记录详细诊断日志到 .log/。
+
+    记录播种执行状态、结果、失败目录以及导入异常堆栈。
+    若日志模块本身不可用，退一步写到 .log/startup_error.txt 纯文本文件。
+    """
+    try:
+        failed_dirs = bundle_seed.get_failed_asset_dirs()
+    except Exception:
+        failed_dirs = []
+
+    failed_dirs_str = ", ".join(failed_dirs) if failed_dirs else "无"
+
+    log_content = (
+        f"应用启动失败（模块导入异常）\n"
+        f"资源播种状态: {seed_status_str}\n"
+        f"失败资源目录: {failed_dirs_str}\n"
+        f"导入异常堆栈:\n{stack_trace_str}"
+    )
+
+    logged = False
+    try:
+        if log is not None:
+            log.error("%s", log_content)
+            for handler in getattr(log, 'handlers', []):
+                with contextlib.suppress(Exception):
+                    handler.flush()
+            logged = True
+    except Exception:
+        logged = False
+
+    if not logged:
+        try:
+            try:
+                work_dir = Path(os_utils.get_work_dir())
+            except Exception:
+                work_dir = Path.cwd()
+            log_dir = work_dir / ".log"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            (log_dir / "startup_error.txt").write_text(log_content + "\n", encoding="utf-8")
+        except Exception:
+            with contextlib.suppress(Exception):
+                Path("startup_error.txt").write_text(log_content + "\n", encoding="utf-8")
+
+
 # 初始化应用程序，并启动主窗口
 def main() -> None:
-    if _init_error is None:
+    # 无论模块导入是否失败，生命周期初始化与资源播种均优先执行且绝不向外抛出未捕获异常
+    with contextlib.suppress(Exception):
         init_velopack()
+
+    with contextlib.suppress(Exception):
         ensure_work_dir_ready()
 
     if _init_error is not None:
-        # 显示错误弹窗，询问用户是否打开排障文档
-        error_message = f"启动一条龙失败,报错信息如下:\n{stack_trace}\n\n是否打开排障文档查看解决方案?"
+        seed_status = get_seed_status_text()
+        _record_startup_error(stack_trace, seed_status)
+
+        # 显示错误弹窗，正文追加播种状态，并询问用户是否打开排障文档
+        error_message = (
+            f"启动一条龙失败,报错信息如下:\n{stack_trace}\n\n"
+            f"{seed_status}\n\n"
+            f"是否打开排障文档查看解决方案?"
+        )
         # MB_ICONERROR | MB_OKCANCEL = 0x10 | 0x01 = 0x11
         # 返回值: IDOK = 1, IDCANCEL = 2
-        result = ctypes.windll.user32.MessageBoxW(0, error_message, "错误", 0x11)
+        try:
+            result = ctypes.windll.user32.MessageBoxW(0, error_message, "错误", 0x11)
+        except Exception:
+            result = 2
 
         # 如果用户点击确定，则打开排障文档
         if result == 1:  # IDOK
-            webbrowser.open("https://docs.qq.com/doc/p/7add96a4600d363b75d2df83bb2635a7c6a969b5")
+            with contextlib.suppress(Exception):
+                webbrowser.open("https://docs.qq.com/doc/p/7add96a4600d363b75d2df83bb2635a7c6a969b5")
 
         sys.exit(1)
 

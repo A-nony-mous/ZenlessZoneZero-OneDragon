@@ -6,15 +6,19 @@ import tempfile
 import uuid
 from pathlib import Path
 
-import yaml
-
 from one_dragon.utils import os_utils
 from one_dragon.utils.log_utils import log
 
 READONLY_ASSET_DIRS: tuple[str, ...] = ('template', 'ui', 'text', 'game_data')
 
+_seed_executed: bool = False
 _seed_error: bool = False
 _failed_asset_dirs: list[str] = []
+
+
+def is_seed_executed() -> bool:
+    """本次运行是否执行过资源播种（仅在冻结环境下执行）。"""
+    return _seed_executed
 
 
 def has_seed_error() -> bool:
@@ -29,9 +33,20 @@ def get_failed_asset_dirs() -> list[str]:
 
 def clear_seed_error() -> None:
     """清除播种失败标记（供 UI 弹窗处理完毕后重置）。"""
-    global _seed_error, _failed_asset_dirs
+    global _seed_error, _failed_asset_dirs, _seed_executed
     _seed_error = False
     _failed_asset_dirs = []
+    _seed_executed = False
+
+
+def get_seed_status_text() -> str:
+    """获取资源播种状态描述文本，供错误弹窗与日志使用。"""
+    if has_seed_error():
+        failed_dirs = get_failed_asset_dirs()
+        if failed_dirs:
+            return f"资源初始化：失败（{', '.join(failed_dirs)}），详见 .log/"
+        return "资源初始化：失败，详见 .log/"
+    return "资源初始化：成功"
 
 
 def _merge_yaml_missing_keys(bundled_file: Path, user_file: Path) -> None:
@@ -39,6 +54,11 @@ def _merge_yaml_missing_keys(bundled_file: Path, user_file: Path) -> None:
 
     用户文件解析失败时直接跳过，不覆盖用户内容。
     """
+    try:
+        import yaml
+    except Exception:
+        log.warning('缺少 yaml 模块，跳过配置文件合并: %s', user_file, exc_info=True)
+        return
     try:
         user_content = user_file.read_text(encoding='utf-8')
         user_data = yaml.safe_load(user_content)
@@ -142,7 +162,8 @@ def ensure_work_dir_ready() -> None:
     if not (os_utils.run_in_exe() or getattr(sys, 'frozen', False)):
         return
 
-    global _seed_error
+    global _seed_error, _seed_executed
+    _seed_executed = True
     try:
         _ensure_work_dir_ready_impl()
     except Exception:
