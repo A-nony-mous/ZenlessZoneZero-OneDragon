@@ -1,4 +1,3 @@
-import contextlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -13,36 +12,10 @@ def is_supported() -> bool:
 
 
 def get_current_version() -> str:
-    """获取当前已安装的 Velopack 包版本。
+    """获取当前已安装的 Velopack 包版本。统一委托至 bundle_seed.get_current_package_version。"""
+    from one_dragon.utils.bundle_seed import get_current_package_version
 
-    用 velopack SDK 的 UpdateManager.get_current_version() 获取；
-    UpdateManager 的构造参数、异常都要兜底，取不到依次回退到 one_dragon.version.__version__，再回退到空串。
-    """
-    with contextlib.suppress(Exception):
-        from velopack import UpdateManager
-
-        um = None
-        try:
-            um = UpdateManager()
-        except TypeError:
-            with contextlib.suppress(Exception):
-                um = UpdateManager(get_update_source())
-        except Exception:
-            with contextlib.suppress(Exception):
-                um = UpdateManager(get_update_source())
-
-        if um is not None:
-            ver = um.get_current_version()
-            if ver:
-                return str(ver).strip()
-
-    with contextlib.suppress(Exception):
-        from one_dragon.version import __version__
-
-        if __version__:
-            return str(__version__).strip()
-
-    return ""
+    return get_current_package_version()
 
 
 def init_velopack() -> None:

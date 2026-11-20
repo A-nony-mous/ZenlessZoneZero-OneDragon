@@ -185,14 +185,37 @@ def parse_nuspec_version(xml_text: str) -> str | None:
 def get_current_package_version() -> str:
     """获取当前软件包的纯版本号。
 
-    1. 从 sys.executable 同级或 Velopack 目录下的 sq.version 中解析 <version> 节点；
-    2. 若解析失败或不存在，依次回退：
-       - updater.get_current_version()
-       - one_dragon.version.__version__
-       - 'unknown'
+    回退顺序统一为：
+    1. SDK UpdateManager.get_current_version()
+    2. 从 sys.executable 同级或 Velopack 目录下的 sq.version 中解析 <version> 节点；
+    3. one_dragon.version.__version__
+    4. 'unknown'
     写进标记文件、状态文件及 --version 输出的均为此纯版本号（例如 '0.1.0-beta.1'）。
     """
-    # 1. 尝试从 sq.version 解析
+    # 1. 优先尝试 Velopack SDK UpdateManager.get_current_version()
+    with contextlib.suppress(Exception):
+        from velopack import UpdateManager
+
+        um = None
+        try:
+            um = UpdateManager()
+        except TypeError:
+            with contextlib.suppress(Exception):
+                from one_dragon.utils.updater import get_update_source
+
+                um = UpdateManager(get_update_source())
+        except Exception:
+            with contextlib.suppress(Exception):
+                from one_dragon.utils.updater import get_update_source
+
+                um = UpdateManager(get_update_source())
+
+        if um is not None:
+            ver = um.get_current_version()
+            if ver:
+                return str(ver).strip()
+
+    # 2. 尝试从 sq.version 解析
     with contextlib.suppress(Exception):
         exe_parent = Path(sys.executable).resolve().parent
         sq_version_file = exe_parent / 'sq.version'
@@ -202,6 +225,8 @@ def get_current_package_version() -> str:
                 cand = vpk_root / 'current' / 'sq.version'
                 if cand.exists():
                     sq_version_file = cand
+                elif (vpk_root / 'sq.version').exists():
+                    sq_version_file = vpk_root / 'sq.version'
 
         if sq_version_file.exists():
             raw_text = sq_version_file.read_text(encoding='utf-8').strip()
@@ -211,20 +236,12 @@ def get_current_package_version() -> str:
             if raw_text and '<' not in raw_text:
                 return raw_text
 
-    # 2. 回退到 updater.get_current_version()
-    with contextlib.suppress(Exception):
-        from one_dragon.utils import updater
-
-        ver = updater.get_current_version()
-        if ver:
-            return ver
-
     # 3. 回退到 one_dragon.version.__version__
     with contextlib.suppress(Exception):
         from one_dragon.version import __version__
 
         if __version__:
-            return __version__.strip()
+            return str(__version__).strip()
 
     # 4. 兜底
     return 'unknown'

@@ -41,14 +41,14 @@ def get_exe_version(exe_path: str) -> str:
         try:
             target = Path(exe_path).resolve()
             if target == Path(sys.executable).resolve():
-                from one_dragon.utils import updater
+                from one_dragon.utils.bundle_seed import get_current_package_version
 
-                return updater.get_current_version()
+                return get_current_package_version()
             vpk_root = os_utils.get_velopack_root()
             if vpk_root is not None and (target == vpk_root or vpk_root in target.parents):
-                from one_dragon.utils import updater
+                from one_dragon.utils.bundle_seed import get_current_package_version
 
-                return updater.get_current_version()
+                return get_current_package_version()
         except Exception:
             pass
 
@@ -83,9 +83,9 @@ def get_launcher_version() -> str:
         str: 版本号
     """
     if os_utils.is_velopack_mode():
-        from one_dragon.utils import updater
+        from one_dragon.utils.bundle_seed import get_current_package_version
 
-        return updater.get_current_version()
+        return get_current_package_version()
 
     if getattr(sys, 'frozen', False):
         launcher_path = Path(sys.executable)

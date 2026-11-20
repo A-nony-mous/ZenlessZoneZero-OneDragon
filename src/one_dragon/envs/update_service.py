@@ -65,9 +65,9 @@ class UpdateService:
         if cached is not None:
             return cached
         if os_utils.is_velopack_mode():
-            from one_dragon.utils import updater
+            from one_dragon.utils.bundle_seed import get_current_package_version
 
-            current_version = updater.get_current_version()
+            current_version = get_current_package_version()
         else:
             exe_path = Path(os_utils.get_work_dir()) / self.get_launcher_exe_name(launcher_type)
             current_version = app_utils.get_exe_version(str(exe_path)) if exe_path.exists() else ''
@@ -91,7 +91,9 @@ class UpdateService:
             latest_stable,
             latest_beta,
         )
-        return current_version != target_latest
+        if not current_version or not target_latest:
+            return False
+        return current_version.removeprefix('v') != target_latest.removeprefix('v')
 
     @staticmethod
     def get_launcher_target_version(
@@ -110,8 +112,19 @@ class UpdateService:
             应保持或更新到的目标版本。
         """
         if current_version and '-beta' in current_version:
-            return latest_beta or latest_stable or current_version
-        return latest_stable or current_version
+            target = latest_beta or latest_stable or current_version
+        else:
+            target = latest_stable or current_version
+
+        # 若目标版本仅与当前版本相差 'v' 前缀（如 'v0.1.0-beta.2' 与 '0.1.0-beta.2'），保持当前版本格式，避免比较出错
+        if (
+            current_version
+            and target
+            and current_version.removeprefix('v') == target.removeprefix('v')
+        ):
+            return current_version
+
+        return target
 
     @staticmethod
     def detect_running_launcher_type() -> LauncherType | None:
