@@ -124,23 +124,14 @@ checkout 目标本地分支
 同步工作区
 ```
 
-GitService 只负责从目标提交读取清单、调用兼容性检查，并在修改工作区前决定是否停止。冻结环境识别、打包清单读取、导入解析与新增依赖探测由独立的 `one_dragon.envs.runtime_compatibility` 模块负责。
+首次初始化仓库时，集成启动器会把内置正式版本号作为 tag 传入，例如 `v2.4.6`。GitService 只拉取对应的 `refs/tags/v2.4.6`，将 lightweight 或 annotated tag peel 到 commit，再用该 commit 建立 `refs/remotes/<git_remote>/<git_branch>`；后续仍按普通本地分支 checkout，因此不会进入 detached HEAD。
 
-清单内容变化不直接表示不兼容：仅新增导入无法由当前冻结运行时满足，或变化后的清单无法可靠解析时，才阻止更新；具体规则与检查边界见 [模块清单机制](../runtime_launcher.md#模块清单机制)。
-
-模块清单不兼容时会在 checkout 前返回 `GitSyncStatus.RUNTIME_INCOMPATIBLE`，以避免旧版 RuntimeLauncher 切换到无法加载的新代码。此时 fetch 可能已经成功，`refs/remotes/<git_remote>/<git_branch>` 也可能已经存在，但当前工作区和 `HEAD` 不会被切换。该状态不表示 Git 仓库损坏，不会触发仓库重建。
-
-首次初始化仓库时，集成启动器会把内置正式版本号作为 tag 传入，例如 `v2.4.6`。GitService 只拉取对应的 `refs/tags/v2.4.6`，将 lightweight 或 annotated tag peel 到 commit，再用该 commit 建立 `refs/remotes/<git_remote>/<git_branch>`；后续仍按普通本地分支 checkout，因此不会进入 detached HEAD。tag 对应构建当前 `.runtime` 时的源码提交，不再重复执行模块清单检查。
-
-如果所有代码源都无法取得内置 tag，不退化为最新分支，以免首次 checkout 到不兼容代码。只有 `_fetch_remote()` 返回 `REMOTE_UNAVAILABLE` 时，首次初始化才转换为 `BUILTIN_TAG_UNAVAILABLE`；本地对象重建、远程地址恢复或仓库应用失败继续返回 `LOCAL_UPDATE_FAILED`，不能伪装成 tag 不可用。纯远程失败时保留新建的 `.git` 和安装包内置源码；目标本地分支仍不存在，所以下次启动仍按同一内置 tag 重试。即使导入 tag 时确认本地对象缺失并触发仓库重建，重建流程也继续使用该 tag，不改拉配置分支。非正式版本（`v0.0.0`、`dev+...`、`pr...`）不指定 tag，仍使用分支 fetch 和模块清单检查。
-
-没有指定内置 tag 的首次初始化，以及已有仓库更新，都会在 checkout 前执行模块清单检查。不兼容时保留已拉取对象和远程跟踪引用，但不创建或切换本地分支；集成启动器继续运行安装包内或当前工作区中与 `.runtime` 匹配的源码。升级集成启动器后，下次同步可继续完成 checkout。
+如果所有代码源都无法取得内置 tag，不退化为最新分支，以免首次 checkout 到不匹配代码。只有 `_fetch_remote()` 返回 `REMOTE_UNAVAILABLE` 时，首次初始化才转换为 `BUILTIN_TAG_UNAVAILABLE`；本地对象重建、远程地址恢复或仓库应用失败继续返回 `LOCAL_UPDATE_FAILED`，不能伪装成 tag 不可用。纯远程失败时保留新建的 `.git` 和安装包内置源码；目标本地分支仍不存在，所以下次启动仍按同一内置 tag 重试。即使导入 tag 时确认本地对象缺失并触发仓库重建，重建流程也继续使用该 tag，不改拉配置分支。非正式版本（`v0.0.0`、`dev+...`、`pr...`）不指定 tag，仍使用分支 fetch。
 
 `fetch_latest_code()` 使用结构化状态，不让调用方比较错误文案：
 
 - `SUCCESS`：首次准备、提交更新或分支切换已经完成，磁盘代码发生了有效变化；
 - `UP_TO_DATE`：同步前后分支相同，且本地、远程提交相同，不需要重启；
-- `RUNTIME_INCOMPATIBLE`：目标代码需要更新启动器后才能使用，checkout 前已停止；
 - `BUILTIN_TAG_UNAVAILABLE`：首次正式版本无法完成内置 tag 的远程获取，不拉取最新分支；
 - `REMOTE_UNAVAILABLE`：所有候选代码源都没有完成远程获取或导入，本地应用阶段尚未开始；
 - `LOCAL_CHANGES`：程序文件改动或无法快进阻止了非强制更新，已有代码保持不变；
@@ -153,10 +144,9 @@ GitService 只负责从目标提交读取清单、调用兼容性检查，并在
 
 - `远程代码拉取成功`：只表示候选源 fetch 和临时仓库导入成功；
 - `成功切换到分支 <git_branch>`：才表示本地分支和 `HEAD` 已完成 checkout；
-- `RUNTIME_INCOMPATIBLE`：表示流程在 checkout 前被模块清单检查拦截；
 - `LOCAL_UPDATE_FAILED`：表示本地更新步骤没有完整完成，调用方不得假定磁盘代码可安全加载。
 
-旧仓库如果遗留 `HEAD -> refs/heads/master`，而本地 `master` 引用已经不存在，后续依赖 `repo.head.target` 的提交历史读取会报 `reference 'refs/heads/master' not found`。这类错误不表示远程 fetch 失败，应先检查同次日志中的 checkout 和模块清单检查结果，以及本地 `HEAD` 实际指向。
+旧仓库如果遗留 `HEAD -> refs/heads/master`，而本地 `master` 引用已经不存在，后续依赖 `repo.head.target` 的提交历史读取会报 `reference 'refs/heads/master' not found`。这类错误不表示远程 fetch 失败，应先检查同次日志中的 checkout 结果，以及本地 `HEAD` 实际指向。
 
 ## Windows 与 PyInstaller 入口
 

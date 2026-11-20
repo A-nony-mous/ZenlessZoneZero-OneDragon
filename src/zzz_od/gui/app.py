@@ -5,6 +5,8 @@ try:
     from PySide6.QtGui import QCloseEvent
     from PySide6.QtWidgets import QApplication
     from qfluentwidgets import (
+        InfoBar,
+        InfoBarPosition,
         NavigationItemPosition,
         Theme,
         setTheme,
@@ -14,6 +16,7 @@ try:
     from one_dragon.utils import app_utils, os_utils
     from one_dragon.utils.bundle_seed import ensure_work_dir_ready
     from one_dragon.utils.i18_utils import gt
+    from one_dragon.utils.log_utils import log
     from one_dragon.utils.updater import init_velopack
     from one_dragon_qt.overlay.overlay_manager import OverlayManager
     from one_dragon_qt.services.styles_manager import OdQtStyleSheet
@@ -269,10 +272,32 @@ try:
                 if dialog.exec():
                     self.ctx.env_config.is_first_run = False
 
+        def _check_bundle_seed_error(self) -> None:
+            """启动时若只读资源播种失败，弹一次性警告通知用户。"""
+            try:
+                from one_dragon.utils import bundle_seed
+
+                if bundle_seed.has_seed_error():
+                    failed_dirs = bundle_seed.get_failed_asset_dirs()
+                    dir_info = f" ({', '.join(failed_dirs)})" if failed_dirs else ""
+                    InfoBar.warning(
+                        title=gt('资源更新失败'),
+                        content=gt(f'只读资源更新失败{dir_info}，详细报错请查看 .log/ 目录下的日志'),
+                        orient=Qt.Orientation.Horizontal,
+                        isClosable=True,
+                        position=InfoBarPosition.TOP_RIGHT,
+                        duration=15000,
+                        parent=self,
+                    )
+                    bundle_seed.clear_seed_error()
+            except Exception:
+                log.warning('检查只读资源播种状态失败', exc_info=True)
+
         def _after_app_launch(self):
             """异步处理应用启动后需要处理的事情"""
             self._check_version_runner.start()
             self._check_first_run()
+            self._check_bundle_seed_error()
             self.check_resource_updates(force=True)
             self.on_welcome_dialog_closed()
 

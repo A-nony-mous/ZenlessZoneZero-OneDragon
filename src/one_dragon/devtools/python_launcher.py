@@ -297,9 +297,6 @@ def fetch_latest_code(ctx: OneDragonEnvContext) -> None:
     status, message = ctx.git_service.fetch_latest_code(progress_callback=progress_callback)
     if status in (GitSyncStatus.SUCCESS, GitSyncStatus.UP_TO_DATE):
         level = 'PASS'
-    elif status is GitSyncStatus.RUNTIME_INCOMPATIBLE:
-        message = f'{message}, {gt("继续使用当前版本")}'
-        level = 'WARNING'
     elif status is GitSyncStatus.BUILTIN_TAG_UNAVAILABLE:
         message = f'{message}, {gt("继续使用内置版本")}'
         level = 'WARNING'

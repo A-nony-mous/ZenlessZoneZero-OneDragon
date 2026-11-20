@@ -1,4 +1,5 @@
 import contextlib
+import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -557,13 +558,43 @@ class HomeInterface(BaseInterface):
         self._velopack_check_runner.checked.connect(self._on_update_status_changed)
         self._download_dialog: VelopackDownloadDialog | None = None
         self._download_runner: VelopackDownloadRunner | None = None
+        self._last_velopack_check_time: float = 0.0
+        self._min_check_interval: float = 600.0  # 10 分钟最小检查间隔
+        self._check_failure_count: int = 0
+
+    def _get_velopack_check_interval(self) -> float:
+        """获取当前 Velopack 检查间隔。失败时按次数指数退避（最大 2 小时）。"""
+        if self._check_failure_count <= 0:
+            return self._min_check_interval
+        backoff_multiplier = 2 ** min(self._check_failure_count - 1, 4)
+        return min(self._min_check_interval * backoff_multiplier, 7200.0)
+
+    def _maybe_trigger_check_update_on_shown(self) -> None:
+        """首页显示时按冷却时间与退避策略尝试自动检查更新。"""
+        if not os_utils.is_velopack_mode():
+            return
+        now = time.time()
+        interval = self._get_velopack_check_interval()
+        if now - self._last_velopack_check_time < interval:
+            return
+        if not self._velopack_check_runner.isRunning() and self._download_runner is None:
+            self._last_velopack_check_time = now
+            self._velopack_check_runner.project_config = self.ctx.project_config
+            self._velopack_check_runner.start()
 
     def _on_update_status_changed(self, success: bool, update_info: object, error_msg: str) -> None:
         """处理 Velopack 更新检查返回的状态。"""
         if not success:
+            self._check_failure_count += 1
+            short_err = error_msg.strip().splitlines()[0][:60] if error_msg else ''
+            content = (
+                f"{gt('无法连接到更新服务器')}（{short_err}），{gt('详情请查看 .log/ 目录下日志')}"
+                if short_err
+                else f"{gt('无法连接到更新服务器')}，{gt('详情请查看 .log/ 目录下日志')}"
+            )
             bar = InfoBar.warning(
                 title=gt('检查更新失败'),
-                content=gt('无法连接到更新服务器，请检查网络设置'),
+                content=content,
                 orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 position=InfoBarPosition.TOP_RIGHT,
@@ -572,9 +603,11 @@ class HomeInterface(BaseInterface):
             )
             if bar is not None:
                 retry_btn = PushButton(gt('重试'), bar)
-                retry_btn.clicked.connect(lambda: (bar.close(), self._trigger_check_update()))
+                retry_btn.clicked.connect(lambda: (bar.close(), self._trigger_check_update(force=True)))
                 bar.addWidget(retry_btn)
             return
+
+        self._check_failure_count = 0
 
         if update_info is None:
             return
@@ -595,10 +628,14 @@ class HomeInterface(BaseInterface):
         else:
             self._update_remind_later = True
 
-    def _trigger_check_update(self) -> None:
-        """手动或重试触发 Velopack 检查。"""
+    def _trigger_check_update(self, force: bool = False) -> None:
+        """手动或重试触发 Velopack 检查。force=True 时跳过冷却间隔。"""
         if os_utils.is_velopack_mode():
+            now = time.time()
+            if not force and now - self._last_velopack_check_time < self._get_velopack_check_interval():
+                return
             if not self._velopack_check_runner.isRunning() and self._download_runner is None:
+                self._last_velopack_check_time = now
                 self._velopack_check_runner.project_config = self.ctx.project_config
                 self._velopack_check_runner.start()
 
@@ -673,9 +710,7 @@ class HomeInterface(BaseInterface):
             self._set_title_bar_home_mode(True)
 
         if os_utils.is_velopack_mode():
-            if not self._velopack_check_runner.isRunning() and self._download_runner is None:
-                self._velopack_check_runner.project_config = self.ctx.project_config
-                self._velopack_check_runner.start()
+            self._maybe_trigger_check_update_on_shown()
         else:
             check_resource_updates = getattr(
                 self.main_window,

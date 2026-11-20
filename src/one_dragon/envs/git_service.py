@@ -54,7 +54,6 @@ class GitSyncStatus(StrEnum):
 
     SUCCESS = '更新完成'
     UP_TO_DATE = '当前已是最新版本'
-    RUNTIME_INCOMPATIBLE = '新版本需要更新启动器才能使用'
     BUILTIN_TAG_UNAVAILABLE = '暂时无法获取当前版本所需文件'
     REMOTE_UNAVAILABLE = '暂时无法获取更新'
     LOCAL_CHANGES = '检测到程序文件有改动，未自动更新'

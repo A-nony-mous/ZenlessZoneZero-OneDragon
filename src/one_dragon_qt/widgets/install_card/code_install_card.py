@@ -64,8 +64,6 @@ class CodeInstallCard(BaseInstallCard):
         if status is GitSyncStatus.SUCCESS:
             self.updated = True
             message = f'{msg}, {gt("重启后生效")}'
-        elif status is GitSyncStatus.RUNTIME_INCOMPATIBLE:
-            message = f'{msg}, {gt("请先更新启动器")}'
         elif status is GitSyncStatus.BUILTIN_TAG_UNAVAILABLE:
             message = f'{msg}, {gt("请稍后重试")}'
         elif status is GitSyncStatus.REMOTE_UNAVAILABLE:
@@ -82,7 +80,6 @@ class CodeInstallCard(BaseInstallCard):
         if status in (GitSyncStatus.SUCCESS, GitSyncStatus.UP_TO_DATE):
             color = FluentThemeColor.DEFAULT_BLUE.value
         elif status in (
-            GitSyncStatus.RUNTIME_INCOMPATIBLE,
             GitSyncStatus.BUILTIN_TAG_UNAVAILABLE,
             GitSyncStatus.REMOTE_UNAVAILABLE,
             GitSyncStatus.LOCAL_CHANGES,

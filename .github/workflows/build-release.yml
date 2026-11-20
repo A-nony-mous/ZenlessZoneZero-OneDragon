@@ -118,7 +118,7 @@ jobs:
             --runtime win-x64 `
             --packTitle "ZenlessZoneZero-OneDragon" `
             --packAuthors "OneDragon-Anything" `
-            --signTemplate "pwsh -File tools/ci/sign_file.ps1 {{file}}" `
+            --signTemplate 'pwsh -File tools/ci/sign_file.ps1 "{{file}}"' `
             --outputDir $releasesDir
         } else {
           vpk pack `
@@ -182,24 +182,53 @@ jobs:
               throw "Portable.zip not found at $portableZip"
           }
 
+          # 1. 解压 Portable.zip 并检索所有 OneDragon.exe 与 Update.exe
           $tempExtract = Join-Path $env:RUNNER_TEMP "portable_check"
           if (Test-Path $tempExtract) { Remove-Item -Path $tempExtract -Recurse -Force }
           Expand-Archive -Path $portableZip -DestinationPath $tempExtract -Force
 
-          $oneDragonExe = Get-ChildItem -Path $tempExtract -Filter "OneDragon.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
-          $updateExe = Get-ChildItem -Path $tempExtract -Filter "Update.exe" -Recurse | Select-Object -First 1 -ExpandProperty FullName
+          $portableExes = Get-ChildItem -Path $tempExtract -Recurse -File | Where-Object { $_.Name -in @("OneDragon.exe", "Update.exe") } | Select-Object -ExpandProperty FullName
+          Write-Host "Found $($portableExes.Count) target executables inside Portable.zip:"
+          $portableExes | ForEach-Object { Write-Host "  - $_" }
 
-          if (-not $oneDragonExe -or -not (Test-Path $oneDragonExe)) {
-              throw "OneDragon.exe not found inside $portableZip"
+          $portableOneDragonCount = ($portableExes | Where-Object { $_ -like "*OneDragon.exe" }).Count
+          $portableUpdateCount = ($portableExes | Where-Object { $_ -like "*Update.exe" }).Count
+          if ($portableOneDragonCount -lt 1) {
+              throw "No OneDragon.exe found inside $portableZip"
           }
-          if (-not $updateExe -or -not (Test-Path $updateExe)) {
-              throw "Update.exe not found inside $portableZip"
+          if ($portableUpdateCount -lt 1) {
+              throw "No Update.exe found inside $portableZip"
           }
 
-          $targets = @($setupExe, $oneDragonExe, $updateExe)
+          # 2. 解压 *-full.nupkg 并检索包内所有 OneDragon.exe 与 Update.exe
+          $fullNupkgs = Get-ChildItem -Path $releasesDir -Filter "*-full.nupkg"
+          if ($fullNupkgs.Count -eq 0) {
+              throw "No *-full.nupkg package found in $releasesDir"
+          }
+
+          $nupkgExes = @()
+          foreach ($nupkg in $fullNupkgs) {
+              $nupkgExtract = Join-Path $env:RUNNER_TEMP ("nupkg_" + $nupkg.BaseName)
+              if (Test-Path $nupkgExtract) { Remove-Item -Path $nupkgExtract -Recurse -Force }
+              Expand-Archive -Path $nupkg.FullName -DestinationPath $nupkgExtract -Force
+
+              $matched = Get-ChildItem -Path $nupkgExtract -Recurse -File | Where-Object { $_.Name -in @("OneDragon.exe", "Update.exe") } | Select-Object -ExpandProperty FullName
+              Write-Host "Found $($matched.Count) target executables inside $($nupkg.Name):"
+              $matched | ForEach-Object { Write-Host "  - $_" }
+
+              if (($matched | Where-Object { $_ -like "*OneDragon.exe" }).Count -lt 1) {
+                  throw "No OneDragon.exe found inside $($nupkg.Name)"
+              }
+              $nupkgExes += $matched
+          }
+
+          # 3. 汇总所有待验证目标并逐一执行 Authenticode 校验
+          $allTargets = @($setupExe) + $portableExes + $nupkgExes
+          Write-Host "`nTotal $($allTargets.Count) binary targets to verify for Authenticode signature:"
+          $allTargets | ForEach-Object { Write-Host "  - $_" }
+
           $failed = $false
-
-          foreach ($target in $targets) {
+          foreach ($target in $allTargets) {
               $sig = Get-AuthenticodeSignature -FilePath $target
               Write-Host "Authenticode check [$target]: Status=$($sig.Status), Subject=$($sig.SignerCertificate.Subject)"
               if ($sig.Status -ne 'Valid') {
@@ -213,7 +242,7 @@ jobs:
               exit 1
           }
 
-          Write-Host "All release executables (Setup.exe, OneDragon.exe, Update.exe) verified successfully."
+          Write-Host "`nAll release executables across Setup.exe, Portable.zip, and full.nupkg verified successfully."
 
   release:
     runs-on: windows-latest

@@ -108,7 +108,6 @@ uv run pyinstaller --noconfirm --clean "OneDragon-Launcher.spec"
 - **最小打包**：仅打包 `one_dragon.launcher`、`one_dragon.version` 模块和二进制依赖（pygit2 等）
 - **源码加载**：借助 `hook_path_inject.py` 运行时钩子，将 `<exe_dir>/src` 注入 `sys.path`，其余模块从 `src/` 目录加载
 - **自动更新**：首次运行时自动克隆代码仓库；后续运行时根据 `auto_update_code` 配置自动拉取最新代码
-- **Manifest 兼容性检查**：`module_manifest.py` 记录打包时的外部导入，代码更新时只检查新增导入能否由当前运行时满足；已打包的间接依赖和已有库中的导入名称可直接复用，实际缺失或加载失败才提示更新启动器。详细边界见 [模块清单机制](one_dragon/runtime_launcher.md#模块清单机制)
 
 #### 打包命令
 
@@ -122,6 +121,4 @@ uv run pyinstaller --noconfirm --clean "OneDragon-RuntimeLauncher.spec"
 |------|------|
 | `deploy/OneDragon-RuntimeLauncher.spec` | PyInstaller 打包配置 |
 | `deploy/hook_path_inject.py` | 运行时钩子，注入 `src/` 到 `sys.path` |
-| `deploy/generate_module_manifest.py` | 生成外部依赖清单 |
-| `deploy/module_manifest.py` | 自动生成的依赖清单（打包时生成） |
 | `src/zzz_od/win_exe/runtime_launcher.py` | 集成启动器入口 |
