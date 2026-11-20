@@ -178,8 +178,8 @@ def has_user_configured(work_dir: Path) -> tuple[bool, list[str]]:
     2. 存在仅用户交互才会生成的私有配置文件（如 config/game_account.yml, config/one_dragon.yml）；
     3. config/env.yml 存在且包含脱离默认值的关键配置（如 game_path 非空、代理设置已填入等）；
     4. 播种的基础配置文件（如 config/project.yml）哈希与包内模板不同；
-    5. custom/ 目录下存在用户自定义素材文件（如 custom/assets/ui/banner）；
-    6. assets/models/ 目录下存在已下载的模型文件。
+    5. custom/ 目录下存在用户自定义素材文件（如 custom/assets/ui/banner）。
+    （注：assets/models/ 下的模型文件为运行时/预打包下载的模型权重，不计入用户私有配置判定，避免误判）。
 
     Returns:
         (has_configured, reasons): 是否已修改及命中的判定原因列表。
@@ -243,13 +243,9 @@ def has_user_configured(work_dir: Path) -> tuple[bool, list[str]]:
                 reasons.append(f"custom/ 存在自定义素材: {f.name}")
                 break
 
-    # 6. 检查 assets/models
-    models_dir = work_dir / "assets" / "models"
-    if models_dir.is_dir():
-        for f in models_dir.rglob("*"):
-            if f.is_file() and f.stat().st_size > 0:
-                reasons.append(f"assets/models 存在模型文件: {f.name}")
-                break
+    # 注意：assets/models/ 下的模型文件为运行时/预打包下载的 AI 权重资源，
+    # 不属于用户私有业务配置。若将模型计入用户配置，预打包模型或静默下载将导致
+    # 首启向导被永久抑制，因此此处不把模型存在作为已配置判定依据。
 
     return len(reasons) > 0, reasons
 
@@ -596,7 +592,6 @@ def execute_migration(
     staging_models.mkdir(parents=True, exist_ok=True)
 
     backup_dir_path: Path | None = None
-    tx_backup_dir: Path | None = None
 
     try:
         # 若是延迟迁移：先生成持久快照 config_backup_<YYYYMMDD_HHMMSS>/
@@ -609,6 +604,17 @@ def execute_migration(
 
         # A. 迁移 custom/
         old_custom = legacy_dir / "custom"
+        target_custom = work_dir / "custom"
+        # 预先将 work_dir / "custom" 现有内容完整合入 staging
+        if target_custom.is_dir():
+            for root, _, files in os.walk(target_custom):
+                for file in files:
+                    src_file = Path(root) / file
+                    rel = src_file.relative_to(target_custom)
+                    dst_file = staging_custom / rel
+                    dst_file.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src_file, dst_file)
+
         if old_custom.is_dir():
             for root, _, files in os.walk(old_custom):
                 for file in files:
@@ -617,9 +623,8 @@ def execute_migration(
                     dst_file = staging_custom / rel
                     dst_file.parent.mkdir(parents=True, exist_ok=True)
                     # 延迟迁移场景：若新版已有同名素材，保留新版
-                    new_work_custom_file = work_dir / "custom" / rel
-                    if is_delayed and new_work_custom_file.exists():
-                        shutil.copy2(new_work_custom_file, dst_file)
+                    if is_delayed and (target_custom / rel).exists():
+                        pass
                     else:
                         shutil.copy2(src_file, dst_file)
                     copied_count += 1
@@ -628,19 +633,19 @@ def execute_migration(
                             copied_count, file_count, f"复制素材: {rel}"
                         )
 
-        # 如果延迟迁移中新根层有额外的 custom 文件，带入 staging
-        if is_delayed and (work_dir / "custom").is_dir():
-            for root, _, files in os.walk(work_dir / "custom"):
+        # B. 迁移 assets/models/
+        old_models = legacy_dir / "assets" / "models"
+        target_models = work_dir / "assets" / "models"
+        # 预先将 work_dir / "assets" / "models" 现有内容完整合入 staging
+        if target_models.is_dir():
+            for root, _, files in os.walk(target_models):
                 for file in files:
                     src_file = Path(root) / file
-                    rel = src_file.relative_to(work_dir / "custom")
-                    dst_file = staging_custom / rel
-                    if not dst_file.exists():
-                        dst_file.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(src_file, dst_file)
+                    rel = src_file.relative_to(target_models)
+                    dst_file = staging_models / rel
+                    dst_file.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src_file, dst_file)
 
-        # B. 迁移 assets/models/ (增量合并)
-        old_models = legacy_dir / "assets" / "models"
         if old_models.is_dir():
             for root, _, files in os.walk(old_models):
                 for file in files:
@@ -649,10 +654,7 @@ def execute_migration(
                     dst_file = staging_models / rel
                     dst_file.parent.mkdir(parents=True, exist_ok=True)
                     # 新根层已有的模型文件保持新根层，未下载的增量补入
-                    new_work_model_file = work_dir / "assets" / "models" / rel
-                    if new_work_model_file.exists():
-                        shutil.copy2(new_work_model_file, dst_file)
-                    else:
+                    if not (target_models / rel).exists():
                         shutil.copy2(src_file, dst_file)
                     copied_count += 1
                     if progress_callback:
@@ -742,8 +744,8 @@ def execute_migration(
                             copied_count, file_count, f"配置合并: {rel}"
                         )
 
-        # 若是延迟迁移，且新 config 中存在旧版没有的文件，追加至 staging
-        if is_delayed and new_config.is_dir():
+        # 将新 config 中旧版没有的文件追加至 staging（包括延迟迁移或纯首启下新版独有的配置文件）
+        if new_config.is_dir():
             for root, _, files in os.walk(new_config):
                 for file in files:
                     src_file = Path(root) / file
@@ -754,61 +756,140 @@ def execute_migration(
                         shutil.copy2(src_file, dst_file)
 
         # -------------------- 阶段二：两阶段原子替换 --------------------
-        # 1. 替换 custom/
-        target_custom = work_dir / "custom"
-        target_custom.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(staging_custom, target_custom, dirs_exist_ok=True)
+        assets_dir = work_dir / "assets"
+        assets_existed_before = assets_dir.exists()
 
-        # 2. 替换 assets/models/
-        target_models = work_dir / "assets" / "models"
-        target_models.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(staging_models, target_models, dirs_exist_ok=True)
+        swap_targets: list[dict[str, Any]] = [
+            {
+                "name": "custom",
+                "target": work_dir / "custom",
+                "staging": staging_custom,
+                "tx_backup": work_dir / f".custom.tx_{staging_id}",
+                "existed_before": False,
+                "swapped": False,
+            },
+            {
+                "name": "models",
+                "target": work_dir / "assets" / "models",
+                "staging": staging_models,
+                "tx_backup": (work_dir / "assets") / f".models.tx_{staging_id}",
+                "existed_before": False,
+                "swapped": False,
+            },
+            {
+                "name": "config",
+                "target": work_dir / "config",
+                "staging": staging_config,
+                "tx_backup": work_dir / f".config.tx_{staging_id}",
+                "existed_before": False,
+                "swapped": False,
+            },
+        ]
 
-        # 3. 原子重命名替换 config/
-        tx_backup_dir = (
-            work_dir / f"{CONFIG_TRANSACTION_BACKUP_PREFIX}{staging_id}"
-        )
-        if new_config.exists():
-            _safe_rename(new_config, tx_backup_dir)
+        swapped_targets: list[dict[str, Any]] = []
 
-        _safe_rename(staging_config, new_config)
+        try:
+            for item in swap_targets:
+                target_p: Path = item["target"]
+                staging_p: Path = item["staging"]
+                tx_backup_p: Path = item["tx_backup"]
 
-        # 提包成功：清理事务备份目录（纯净首启下原默认配置无需保留在 .config.backup 中）
-        if tx_backup_dir.exists():
-            shutil.rmtree(tx_backup_dir, ignore_errors=True)
+                has_staging_content = staging_p.is_dir() and any(
+                    staging_p.rglob("*")
+                )
+                if not target_p.exists() and not has_staging_content:
+                    continue
 
-        # 清理 staging 目录
-        shutil.rmtree(staging_dir, ignore_errors=True)
+                item["existed_before"] = target_p.exists()
+                target_p.parent.mkdir(parents=True, exist_ok=True)
+                tx_backup_p.parent.mkdir(parents=True, exist_ok=True)
 
-        # -------------------- 阶段三：持久化标记文件 --------------------
-        result_status: dict[str, Any] = {
-            "status": "migrated",
-            "timestamp": datetime.datetime.now().astimezone().isoformat(),
-            "source_path": str(legacy_dir.resolve()),
-            "target_version": get_current_package_version(),
-            "migrated_items": list(WHITELIST_DIRS),
-            "skipped_items": [],
-            "backup_path": backup_dir_path.name if backup_dir_path else "",
-            "file_count": file_count,
-            "total_bytes": total_bytes,
-        }
-        save_migration_status(work_dir, result_status)
-        log.info(
-            "旧数据迁移完成: %d 个文件, 共 %s",
-            file_count,
-            format_bytes(total_bytes),
-        )
-        return result_status
+                # 步骤 1：若现有目标已存在，原子重命名为 .<name>.tx_<uuid>
+                if item["existed_before"]:
+                    _safe_rename(target_p, tx_backup_p)
+
+                # 步骤 2：将 staging 中对应的目录原子重命名为正式目标
+                if staging_p.exists():
+                    _safe_rename(staging_p, target_p)
+
+                item["swapped"] = True
+                swapped_targets.append(item)
+
+            # -------------------- 阶段三：持久化标记文件与清理 --------------------
+            # 提交成功：清理所有 tx_backup 事务临时目录
+            for item in swap_targets:
+                tx_p: Path = item["tx_backup"]
+                if tx_p.exists():
+                    shutil.rmtree(tx_p, ignore_errors=True)
+
+            # 清理 staging 根目录（已全部原子迁出或为空）
+            if staging_dir.exists():
+                shutil.rmtree(staging_dir, ignore_errors=True)
+
+            result_status: dict[str, Any] = {
+                "status": "migrated",
+                "timestamp": datetime.datetime.now().astimezone().isoformat(),
+                "source_path": str(legacy_dir.resolve()),
+                "target_version": get_current_package_version(),
+                "migrated_items": list(WHITELIST_DIRS),
+                "skipped_items": [],
+                "backup_path": backup_dir_path.name if backup_dir_path else "",
+                "file_count": file_count,
+                "total_bytes": total_bytes,
+            }
+            save_migration_status(work_dir, result_status)
+            log.info(
+                "旧数据迁移完成: %d 个文件, 共 %s",
+                file_count,
+                format_bytes(total_bytes),
+            )
+            return result_status
+
+        except Exception as swap_err:
+            log.error("交换阶段发生异常，触发两阶段事务逆序回滚: %s", swap_err)
+            # 1. 逆序回滚所有已完成交换的目标
+            for item in reversed(swapped_targets):
+                target_p = item["target"]
+                tx_backup_p = item["tx_backup"]
+                try:
+                    if target_p.exists():
+                        shutil.rmtree(target_p, ignore_errors=True)
+                    if item["existed_before"] and tx_backup_p.exists():
+                        _safe_rename(tx_backup_p, target_p)
+                except Exception as rb_err:
+                    log.critical("回滚目标 %s 失败: %s", item["name"], rb_err)
+
+            # 2. 处理异常发生时处于半交换中间态的目标
+            for item in swap_targets:
+                target_p = item["target"]
+                tx_backup_p = item["tx_backup"]
+                if (
+                    item["existed_before"]
+                    and tx_backup_p.exists()
+                    and not target_p.exists()
+                ):
+                    with contextlib.suppress(Exception):
+                        _safe_rename(tx_backup_p, target_p)
+
+            # 3. 清理所有残留的 tx_backup 临时目录
+            for item in swap_targets:
+                tx_backup_p = item["tx_backup"]
+                if tx_backup_p.exists():
+                    shutil.rmtree(tx_backup_p, ignore_errors=True)
+
+            # 4. 若 assets 目录为本次新建且为空，彻底清理
+            if not assets_existed_before and assets_dir.exists():
+                with contextlib.suppress(Exception):
+                    if not any(assets_dir.iterdir()):
+                        assets_dir.rmdir()
+
+            raise
 
     except Exception as e:
         log.error("数据迁移执行失败，开始回滚原环境: %s", e, exc_info=True)
-        # 失败回退保障：还原 config/ 并彻底清理 staging 与事务备份
-        if tx_backup_dir and tx_backup_dir.exists():
-            new_config = work_dir / "config"
-            if new_config.exists():
-                shutil.rmtree(new_config, ignore_errors=True)
-            with contextlib.suppress(Exception):
-                _safe_rename(tx_backup_dir, new_config)
+        # 失败回退保障：若当前失败运行生成了持久备份目录，予以回滚清除以维持根层严格不变
+        if backup_dir_path and backup_dir_path.exists():
+            shutil.rmtree(backup_dir_path, ignore_errors=True)
 
         if staging_dir.exists():
             shutil.rmtree(staging_dir, ignore_errors=True)

@@ -378,7 +378,8 @@ def get_work_dir() -> str:
    - **打包规范**：见 `git show c2e3865b:deploy/OneDragon-Launcher.spec:6`，入口为 `src/zzz_od/win_exe/launcher.py`，未捆绑应用代码与完整运行时。
    - **工作目录锁定**：启动时 `src/zzz_od/win_exe/launcher.py:17` 调用 `python_launcher.run_python(["zzz_od", "gui", "app"])`。在 `src/one_dragon/devtools/python_launcher.py:82-90` 的 `verify_working_directory()` 中：
      `if getattr(sys, 'frozen', False): cwd = str(Path(sys.executable).resolve().parent)` 并执行 `os.chdir(cwd)`，将当前工作路径显式锁定为可执行文件所在的旧安装根目录 `<old_root>`。
-   - **子进程环境与执行**：`python_launcher.py:173` 调用 `uv run --frozen -m zzz_od.gui.app`，其环境配置见 `src/one_dragon/envs/env_config.py:10-12`（`DEFAULT_ENV_PATH = os_utils.get_path_under_work_dir('.install')`，`DEFAULT_UV_PATH = .../.install/uv/uv.exe`）。
+   - **子进程环境与执行**：`python_launcher.py:173` 调用 `uv run --frozen -m zzz_od.gui.app`，其环境配置见 `src/one_dragon/envs/env_config.py:10-12`（旧版为 `DEFAULT_ENV_PATH = os_utils.get_path_under_work_dir('.install')`，`DEFAULT_UV_PATH = .../.install/uv/uv.exe`）。
+   - **Velopack 模式下根层 `.install/` 与 `.venv/` 防创建说明（C1）**：在源码模式下，`env_config.py` 需获取安装环境路径，`os_utils.get_path_under_work_dir` 会默认触发 `join_dir_path_with_mk` 的 `mkdir` 行为；为避免在 Velopack 冻结模式下启动时模块导入期被动创建这两个空目录，`env_config.py` 中引入 `_get_default_env_path()` 与 `_get_default_venv_dir_path()` 分流，Velopack 模式下直接通过 `os.path.join(os_utils.get_work_dir(), ...)` 纯净拼接路径而不调用 `get_path_under_work_dir`，从源头消除了空目录的生成，同时保持 `get_path_under_work_dir` 其它全局调用的既有行为不受影响。
    - **非冻结工作目录推导**：被唤起的 Python 子进程处于非冻结状态（`run_in_exe()` 为 `False`），`get_work_dir()` 执行 `c2e3865b:src/one_dragon/utils/os_utils.py:95` 的 `Path(__file__).resolve().parents[3]`。由于此时 `__file__` 位于 `<old_root>/src/one_dragon/utils/os_utils.py`，向上推导 3 层（`utils` -> `one_dragon` -> `src` -> `<old_root>`）精准命中旧安装根目录。
 
 2. **集成版（RuntimeLauncher，外置 `src/`）**：
@@ -496,12 +497,13 @@ def get_work_dir() -> str:
 新包首启在 main 入口已由 `bundle_seed.py` 播种了默认空白模板。更为关键的是，**用户可能在首启时选择了「跳过/以后再说」，在新版中已经正常使用并修改了部分配置，数日后才在设置页中重新发起迁移**。若粗暴以旧文件覆盖新根层，将直接抹除用户在新版中的改动。针对该漏洞，设计严密的分流与冲突保护机制：
 
 #### 7.4.1 如何判定「新根层已被用户修改」
-设计检测契约 `has_user_modified_new_work_dir() -> tuple[bool, list[str]]`，在执行迁移前对新根层进行状态扫描：
+设计检测契约 `has_user_configured(work_dir) -> tuple[bool, list[str]]`，在执行迁移前对新根层进行状态扫描：
 1. **模板哈希比对**：比对新根层 `config/` 中的基础配置文件（`env.yml`, `project.yml`, `custom.yml` 等）与包内只读模板（`resources/config/...`）的内容哈希。若哈希不一致，表明用户修改过配置。
 2. **业务有效字段脱离默认值**：检查关键配置项（如 `env.yml` 中的 `game_path` 非空、代理设置已填入、自定义分辨率等），若脱离了初始默认值，判定已产生用户修改。
 3. **私有配置产生**：检查新根层是否存在只有用户交互才会生成的文件，如 `config/game_account.yml`、`config/one_dragon.yml`，或多实例子目录 `config/00/` 等。
 4. **自定义素材存在**：检查 `custom/assets/ui/banner` 是否存在非空的自定义背景文件。
-- 若上述任一项命中，函数返回 `(True, modified_files_list)`，系统进入「新版已修改场景」分支；若全未命中（仅有全新播种的空模板），系统进入「纯净首启场景」分支。
+- **注意（AI 模型不作为判定依据）**：`assets/models/` 下的模型文件为运行时/预打包下载的 AI 权重资源，不属于用户私有业务配置。若将模型计入用户配置，预打包模型或静默下载将导致首启向导被永久抑制，因此不把模型存在作为已配置判定依据。
+- 若上述任一项命中，函数返回 `(True, modified_files_list)`，系统进入「延迟迁移/新版已修改场景」分支；若全未命中（仅有全新播种的空模板），系统进入「纯净首启场景」分支。
 
 #### 7.4.2 场景 A：纯净首启场景（新根层未被修改）
 此场景新根层仅有包内默认模板，无任何用户资产：
@@ -561,42 +563,48 @@ def get_work_dir() -> str:
 3. **门禁断言**：必须满足 `free_bytes >= required_bytes * 1.2` 且额外剩余不小于 100MB。
 4. 若空间不足，立即抛出 `DiskSpaceInsufficientError`，弹出阻断提示框（明确告知迁移所需空间与当前剩余空间），不发生任何磁盘写操作。
 
-#### 7.5.2 临时 Staging 目录与两阶段原子替换
+#### 7.5.2 临时 Staging 目录与统一两阶段原子替换
 1. **Staging 隔离创建**：
-   在新工作根目录下创建唯一临时目录 `<work_dir>/.migration_staging_<uuid>/`（带 UUID 防冲突）。
+   在新工作根目录下创建唯一临时目录 `<work_dir>/.migration_staging_<uuid>/`（带 UUID 防冲突）。Staging 目录与目标目录同处 `work_dir` 所在磁盘卷，保证后续目录级重命名操作的原子性。
 2. **第一阶段：准备与合并（全部在 Staging 中完成）**：
-   - 将旧目录的 `custom/` 复制到 `.migration_staging_<uuid>/custom/`；
-   - 将旧目录的 `assets/models/` 增量复制到 `.migration_staging_<uuid>/assets/models/`；
-   - 读取旧目录与新根层的 `config/`，在内存完成 7.4 节规定的合并策略后，将完整文件结构写入 `.migration_staging_<uuid>/config/`。
-3. **第二阶段：完整性自检**：
-   比对 staging 中生成的文件列表与源清单，确认关键配置文件大小与结构有效。
-4. **第三阶段：原子提包（Stage-in）**：
-   - 对于新创建的目录（`custom` 与 `assets/models` 中的新模型）：直接通过 `Path.rename()` 原子移入目标路径。
-   - 对于 `config/` 目录：
-     1. 将当前新根层的 `<work_dir>/config` 临时重命名为 `<work_dir>/.config.backup_<uuid>`；
-     2. 将 `.migration_staging_<uuid>/config` 原子重命名为 `<work_dir>/config`；
-     3. 若重命名发生任何异常，立即将 `.config.backup_<uuid>` 还原回 `<work_dir>/config`。
+   - **`custom/`**：先将新根层 `custom/` 既有文件完整同步至 staging，再遍历旧版 `custom/` 合并入 `.migration_staging_<uuid>/custom/`（延迟迁移下保留新版已改素材，首启场景以旧版为主）。
+   - **`assets/models/`**：先将新根层 `assets/models/` 既有模型同步至 staging，再将旧版独有模型文件复制到 `.migration_staging_<uuid>/assets/models/`。
+   - **`config/`**：读取旧目录与新根层的 `config/`，在内存完成 7.4 节规定的缺键合并与核心冲突决策后，将完整文件结构写入 `.migration_staging_<uuid>/config/`；若新根层存在旧版没有的文件，完整追加至 staging。
+   - **产物保证**：阶段一结束时，staging 内部的 `custom/`、`assets/models/`、`config/` 均已成为合并后的**完整最终交付态**。
+3. **第二阶段：原子交换（Commit 阶段严禁 copytree 写正式目录）**：
+   - 依次针对三个目标项（`custom/`、`assets/models/`、`config/`）执行两阶段重命名交换：
+     1. 若当前目标目录在工作区中已存在，先将其原子重命名为事务临时备份 `.<name>.tx_<uuid>`（位于各自父目录下，如 `.custom.tx_<uuid>`、`assets/.models.tx_<uuid>`、`.config.tx_<uuid>`）；若原本不存在，标记 `existed_before = False`；
+     2. 将 staging 中对应的完整目录原子重命名为正式目标路径；
+     3. 记录已完成交换的目标。
+4. **第三阶段：提交成功或逆序回滚**：
+   - **全部成功时**：清理所有 `.*.tx_<uuid>` 临时事务目录，清理 staging 目录，写入 `.legacy_migration_status.json` 标记；若是延迟迁移，生成的 `config_backup_<YYYYMMDD_HHMMSS>/` 永久保留。
+   - **任何一步失败时（逆序原子回滚）**：
+     1. 按逆序回滚所有已交换的目标：若该目标迁移前不存在，彻底删除新建的目标目录；若迁移前存在，删除半置换的目标，并将 `.*.tx_<uuid>` 原子重命名还原回原目标路径；
+     2. 还原当前中断项的事务备份；
+     3. 清理所有残留的 `.*.tx_<uuid>` 与 staging 目录；若 `assets/` 目录为本次新建且为空，清理该空目录；
+     4. 若当前失败运行生成了持久备份目录，予以回滚清除；
+     5. **新根层 100% 恢复为迁移前原状，逐文件 SHA-256 哈希完全一致**。
 
 #### 7.5.3 备份目录去向与全生命周期规范（彻底杜绝残留与误删）
 在两阶段重命名中产生的备份目录，严格遵循以下契约：
 1. **目录命名与位置**：
-   - **事务临时备份**：`<work_dir>/.config.backup_<uuid>`（以点开头的隐藏目录，位于新工作根目录下，专用于重命名事务的原子回滚缓冲）；
-   - **用户持久快照**：`<work_dir>/config_backup_<YYYYMMDD_HHMMSS>/`（显式命名的可见目录，位于新工作根目录下，记录新版已被修改时的历史配置快照）。
+   - **事务临时备份**：`<parent>/.<name>.tx_<uuid>`（以点开头的隐藏目录，与目标同卷同父级，专用于重命名事务的原子回滚缓冲，提交成功或失败回退时均彻底清理，绝不残留）；
+   - **用户持久快照**：`<work_dir>/config_backup_<YYYYMMDD_HHMMSS>/`（显式命名的可见目录，位于新工作根目录下，在延迟迁移场景下记录新版已被修改时的历史配置快照）。
 2. **生命周期与清理规则**：
    - **迁移失败回滚时**：
-     无论新根层此前处于何种状态，一旦迁移报错，事务机制立即将 `.config.backup_<uuid>` 还原重命名为 `<work_dir>/config`，随后彻底递归删除 `.migration_staging_<uuid>`。**新根层 100% 恢复为迁移前原状，不留下任何 `.backup` 或 `.staging` 残留目录**。
+     无论新根层此前处于何种状态，一旦迁移报错，事务机制立即逆序还原 `.*.tx_<uuid>`，随后彻底递归删除临时事务目录与 staging。**新根层 100% 恢复为迁移前原状，不留下任何 `.tx_*` 或 `.staging_*` 残留目录**。
    - **迁移成功完成时**：
-     - **若新根层此前未被修改（纯净首启场景）**：由于新配置已完整继承旧配置并补齐了包内缺键，且新版原始模板在包内 `resources/config/` 中永久存有只读备份，此临时过渡目录 `.config.backup_<uuid>` 在事务提交成功后**立即由后台清理删除**，不留让用户困惑的垃圾文件；
-     - **若新根层此前已被用户修改过（延迟迁移场景）**：**绝对禁止悄悄删除该备份目录！** 系统将临时备份 `.config.backup_<uuid>` 重命名为显式用户持久快照 `<work_dir>/config_backup_<YYYYMMDD_HHMMSS>/`，并在迁移完成弹窗中向用户清晰呈现：`「检测到您此前在新版本中进行过配置，原有配置已为您安全归档至 config_backup_<timestamp> 目录中，随时可供查阅与还原。」`；
+     - **若新根层此前未被修改（纯净首启场景）**：由于新配置已完整继承旧配置并补齐了包内缺键，事务临时目录在提交成功后**立即清理删除**，不留垃圾文件；
+     - **若新根层此前已被用户修改过（延迟迁移场景）**：**绝对禁止悄悄删除持久快照目录！** 系统在迁移前先将新根层当前的 `config/` 和 `custom/` 完整归档到 `<work_dir>/config_backup_<YYYYMMDD_HHMMSS>/`；
      - **持久快照永久保留（人类确认）**：`config_backup_<YYYYMMDD_HHMMSS>/` 作为用户的实际数据资产永久保留，应用程序绝不擅自清理该显式目录。设置页卡片「旧版本数据迁移」上直观展示 `config_backup_*` 的目录数和总磁盘占用，并提供【打开所在目录】入口供用户自主决定是否删除。
 
 #### 7.5.4 Windows 文件占用与锁处理
 1. **短延时重试机制**：
    Windows 下防病毒软件（如 Windows Defender）或文件索引器可能对新建/复制的文件进行短时占用锁定，导致 `rename()` 或 `unlink()` 抛出 `PermissionError` (WinError 32 / WinError 5)。对关键重命名操作引入带回退的指数退避重试（重试 3 次，间隔 200ms）。
 2. **回退与清理保证**：
-   整个迁移执行流程置于 `try...except...finally` 块中：
-   - 一旦重试后仍抛出 `PermissionError` 或发生任何异常，立即触发回滚：还原 `.config.backup_<uuid>`，并递归删除 `.migration_staging_<uuid>`。
-   - `finally` 块确保任何中途退出均不留下半个临时目录，保证工作目录恢复为迁移前纯净状态。
+   整个迁移执行流程置于 `try...except` 事务块中：
+   - 一旦重试后仍抛出 `PermissionError` 或发生任何异常，立即触发两阶段逆序回滚：还原各目标的 `.*.tx_<uuid>`，递归删除 staging，清理新建空目录。
+   - 保证任何中途退出均不留下半个临时目录，保证工作目录恢复为迁移前纯净状态。
 
 #### 7.5.5 旧目录零写入物理保证（硬约束 5）
 - 迁移模块的所有文件读写代码中，**严禁对旧目录路径及其子项调用任何包含写入意图的 API**（如 `open(..., 'w')`, `os.remove()`, `os.rename()`, `shutil.rmtree()`, `mkdir()` 等）。
