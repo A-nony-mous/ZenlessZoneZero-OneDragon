@@ -1,12 +1,12 @@
 # Velopack 分布式交付 Windows 人工验收清单
 
-- 关联 Issue：PLAY-2 / PLAY-5
+- 关联 Issue：PLAY-2 / PLAY-5 / PLAY-8
 - 依据：`docs/design/velopack-distribution.md` 第 5 节验证矩阵「栏目 2：交人类在 Windows 上验」
 - 目标分支：`feat/velopack`
 - 适用环境：Windows 10 / 11 x64，已安装 Git、uv、.NET SDK（用于安装 `vpk`）
 - 状态：**未执行**。本清单由 Tester 整理，供人类在 Windows 真机上逐条执行并记录结果；arm-1 是 aarch64 Linux，无法代替本清单的任一条。
 
-> 说明：清单里所有命令都从**仓库根目录**开始执行（即 `ZenlessZoneZero-OneDragon\`，下文用 `<仓库根目录>` 指代）。每条都有明确的期望结果和断言命令，不要只看一眼就判通过。执行完把「实际结果」填进第 7 节记录表。
+> 说明：清单里所有命令都从**仓库根目录**开始执行（即 `ZenlessZoneZero-OneDragon\`，下文用 `<仓库根目录>` 指代）。每条都有明确的期望结果和断言命令，不要只看一眼就判通过。执行完把「实际结果」填进第 11 节记录表。
 
 ## 0. 执行前准备
 
@@ -89,6 +89,51 @@ vpk pack `
 - `--runtime win-x64` 不能省；省掉会按 x86 打包，64 位 Python 动态库加载失败。
 - 版本号不带前导 `v`（SemVer 2.0.0）。
 
+### 2.1 非发布构建的版本号格式（S5）
+
+带 `build` 标签的 PR，以及手动 `workflow_dispatch` 但不勾 `create_release` 的构建，走的是非发布分支。`tools/ci/get_version.py` 必须输出**合法的 SemVer 2.0.0**，否则 `vpk pack --packVersion` 解析失败、打包直接中止。
+
+格式约定：
+
+| 触发方式 | `GITHUB_REF` 示例 | 期望输出 |
+| :--- | :--- | :--- |
+| PR 构建 | `refs/pull/123/merge` | `0.0.0-pr.123.g<短 sha>` |
+| PR 号带前导 0 | `refs/pull/007/merge` | `0.0.0-pr.7.g<短 sha>`（前导 0 必须去掉） |
+| 普通分支 / 本地 | `refs/heads/feat/velopack` | `0.0.0-dev.g<短 sha>` |
+
+要点：
+
+- core 段必须是三个数字（`MAJOR.MINOR.PATCH`），`pr123` / `dev` 这种字符串不能当 core，旧的 `pr123+<sha>` / `dev+<sha>` 是非法 SemVer2。
+- 纯数字的预发布标识符不能有前导 0（`pr.007` 非法，`pr.7` 合法）。
+- sha 前面加 `g`（`g<sha>`），避免 Git 短 sha 恰好全是数字时被当成纯数字标识符。
+- tag 触发的发布构建仍要保留 `v` 前缀用于 Git tag，但喂给 `vpk` 的版本号去掉 `v`（第 2、3 节的 `--packVersion` 已经是不带 `v` 的形式）。
+
+本地校验（在仓库根目录，PowerShell）：
+
+```powershell
+# 模拟 PR 构建
+$env:GITHUB_REF = 'refs/pull/123/merge'
+$env:CREATE_RELEASE = 'false'
+$env:GITHUB_OUTPUT = Join-Path $env:TEMP 'gh_output.txt'
+uv run python tools/ci/get_version.py
+Get-Content $env:GITHUB_OUTPUT      # 期望 version=0.0.0-pr.123.g<sha>
+
+# 用 SemVer2 官方正则校验非发布版本号
+$v = (Get-Content $env:GITHUB_OUTPUT | Select-String '^version=').Line -replace '^version=', ''
+$SEMVER2 = '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$'
+if ($v -notmatch $SEMVER2) { Write-Host "非法 SemVer2: $v"; exit 1 }
+Write-Host "SemVer2 校验通过: $v"
+
+# tag 发布版本（如 0.1.0-beta.1）额外用 packaging 校验（PEP 440 能解析 beta.N）
+uv run python -c "from packaging.version import Version; print(Version('0.1.0-beta.1'))"
+```
+
+期望：`$v` 匹配官方 SemVer2 正则并打印「SemVer2 校验通过」。
+
+> 注意：`pr` / `dev` 是自定义预发布标识符，`packaging` 的 PEP 440 解析会拒绝（这不是缺陷，SemVer2 允许而 PEP 440 不收录）。因此非发布版本以 SemVer2 正则为准；`packaging` 只用于 tag 发布版本（`0.1.0-beta.1` → `0.1.0b1`）。
+
+CI 侧对应位置：`.github/workflows/build-release.yml` 的 `Pack with Velopack` 步骤（`--packVersion "$semver"`）。arm-1 上无法执行 `vpk`，这里只校验版本串本身。
+
 ## 3. 用同一份代码打第 2 个版本包 `0.1.0-beta.2`（对应验收标准 1、3）
 
 输出目录必须与第 1 个版本相同，Velopack 才能生成完整的更新元数据。
@@ -134,6 +179,50 @@ Test-Path .\deploy\dist\releases\releases.win.json
 
 期望：输出里同时包含 `0.1.0-beta.1` 和 `0.1.0-beta.2`。
 
+### 4.1 三个 exe 的 Authenticode 签名验证（B1 / 验收标准 1）
+
+> 前提：只有 `CREATE_RELEASE == 'true'` 且注入了 `SIGNPATH_*` secrets 的构建才会走 `vpk pack --signTemplate "pwsh -File tools/ci/sign_file.ps1 {{file}}"`。本地无凭据构建产出未签名产物是预期行为；**发布形态必须三个 exe 全部 `Valid`**。CI 的 `sign` job 已经对这三个文件做同样的断言，任一不是 `Valid` 就 `exit 1`，不允许出现「`sign` 绿但产物没签」的情况。
+
+```powershell
+$releases = ".\deploy\dist\releases"
+$setup = (Get-ChildItem $releases -Filter "*Setup.exe" | Select-Object -First 1).FullName
+$zip = (Get-ChildItem $releases -Filter "*win-Portable.zip" | Select-Object -First 1).FullName
+$extract = Join-Path $env:TEMP "OneDragon-SignCheck"
+Remove-Item -Recurse -Force $extract -ErrorAction SilentlyContinue
+Expand-Archive -Path $zip -DestinationPath $extract
+
+$targets = @(
+  [PSCustomObject]@{ Name = 'Setup.exe';     Path = $setup },
+  [PSCustomObject]@{ Name = 'OneDragon.exe'; Path = (Join-Path $extract 'current\OneDragon.exe') },
+  [PSCustomObject]@{ Name = 'Update.exe';    Path = (Join-Path $extract 'Update.exe') }
+)
+
+$targets | ForEach-Object {
+  $sig = Get-AuthenticodeSignature -FilePath $_.Path
+  [PSCustomObject]@{
+    File   = $_.Name
+    Status = $sig.Status
+    Signer = $sig.SignerCertificate.Subject
+  }
+}
+
+# 门禁断言：任意一个不是 Valid 就失败
+$bad = $targets | Where-Object { (Get-AuthenticodeSignature -FilePath $_.Path).Status -ne 'Valid' }
+if ($bad) {
+  $bad | ForEach-Object { Write-Host "签名无效: $($_.Name) -> $((Get-AuthenticodeSignature -FilePath $_.Path).Status)" }
+  exit 1
+}
+Write-Host '三个 exe 签名均为 Valid'
+```
+
+期望：
+
+- 三行 `Status` 全部为 `Valid`。
+- `Signer` 的 `Subject` 含预期的签名主体（OneDragon-Anything 在 SignPath 上配置的组织名），不是 `CN=...` 的自签证书、也不是空值。
+- 最后一行输出「三个 exe 签名均为 Valid」，退出码为 0。
+
+常见非通过状态及含义：`NotSigned`（`--signTemplate` 没挂上或 secrets 未注入）、`HashMismatch`（签名后文件又被改写）、`UnknownError`（时间戳服务不可达）。这几种都算失败，要贴原始 `Status` 回 Issue。
+
 ## 5. 便携版解压启动与首启播种（对应验收标准 2）
 
 1. 解压便携包到**全新空目录**（示例 `C:\TestOneDragon`，目录必须不存在或为空）：
@@ -168,7 +257,9 @@ Test-Path .\deploy\dist\releases\releases.win.json
 
    期望：5 行全部为 `True`。
 
-4. 断言四类只读资源文件数（四类只读目录 `assets/template`、`assets/ui`、`assets/text`、`assets/game_data` 升级时由包内版本整体覆盖，请勿手工修改；数字取自设计文档第 5 节；如果仓库资源在改造期间有增删，记录实际值并说明）：
+4. 断言四类只读资源文件数（S4）：
+
+   > **只读资源覆盖规则（S4）**：`assets/template`、`assets/ui`、`assets/text`、`assets/game_data` 这四类目录在**升级（包版本变化）时由包内版本整体覆盖**——旧版本残留文件会被删除，手工修改也会被抹掉。因此不要手工改这四个目录；模板产出请放 `custom/` 或按 S4 建议迁出。`config/` 的规则不同：只补缺失文件与缺失的顶层键，已有键一律不覆盖，用户文件损坏时跳过（验证步骤见第 6 节第 2 步与第 7 节第 4 步）。数字取自设计文档第 5 节；如果仓库资源在改造期间有增删，记录实际值并说明：
 
    ```powershell
    (Get-ChildItem -Path .\assets\template -Recurse -File).Count      # 期望 1820
@@ -203,7 +294,19 @@ Test-Path .\deploy\dist\releases\releases.win.json
 
    期望：`Select-String` 能查到这一行。
 
-2. 执行就地升级。
+2. 制造「旧版本残留 + 用户删了一个顶层键」的场景，用于验证 S4（缺键合并与只读资源整体覆盖）：
+
+   ```powershell
+   cd C:\TestOneDragon
+   New-Item -ItemType File -Force .\assets\template\stale_from_old_version.txt | Out-Null
+   Set-Content -Path .\assets\ui\ui.txt -Value 'patched by hand'
+   # 删掉一个非必需顶层键，期望升级后首次启动时被包内默认值补齐
+   (Get-Content .\config\project.yml) | Where-Object { $_ -notmatch '^doc_link:' } | Set-Content .\config\project.yml
+   Test-Path .\assets\template\stale_from_old_version.txt      # 期望 True
+   Select-String -Path .\config\project.yml -Pattern '^doc_link:'   # 期望无输出
+   ```
+
+3. 执行就地升级。
 
    > 与设计文档的差异（已修正）：设计原文在 `C:\TestOneDragon` 里执行 `Update.exe apply -p deploy\dist\releases\...nupkg`，这个相对路径在解压目录里不存在（`deploy\` 在仓库里）。这里改成先用绝对路径取到 nupkg，再传给 `Update.exe`。
 
@@ -220,7 +323,7 @@ Test-Path .\deploy\dist\releases\releases.win.json
 
    期望：`Update.exe` 退出码为 0，输出里有应用/安装成功的提示。
 
-3. 断言版本已切换：
+4. 断言版本已切换：
 
    ```powershell
    cd C:\TestOneDragon
@@ -229,7 +332,7 @@ Test-Path .\deploy\dist\releases\releases.win.json
 
    期望：内容为 `0.1.0-beta.2`。
 
-4. 断言用户配置保留：
+5. 断言用户配置保留：
 
    ```powershell
    Select-String -Path .\config\project.yml -Pattern 'test_custom_marker'
@@ -238,7 +341,7 @@ Test-Path .\deploy\dist\releases\releases.win.json
 
    期望：`test_custom_marker: "verified"` 仍然存在，其余用户改动的键没有被包内默认值覆盖。
 
-5. 断言 `current\` 已被整体替换（文件时间比根层 `config\` 新，且 `current\` 里没有升级前手工新增的文件）：
+6. 断言 `current\` 已被整体替换（文件时间比根层 `config\` 新，且 `current\` 里没有升级前手工新增的文件）：
 
    ```powershell
    (Get-Item .\current\OneDragon.exe).LastWriteTime
@@ -267,7 +370,25 @@ Test-Path .\deploy\dist\releases\releases.win.json
 
    期望：两个计数都为 `0`。
 
-4. 关闭应用：
+4. 断言只读资源被整体覆盖、config 缺失的顶层键被补齐（S4）：
+
+   ```powershell
+   cd C:\TestOneDragon
+   Test-Path .\assets\template\stale_from_old_version.txt              # 期望 False
+   Select-String -Path .\assets\ui\ui.txt -Pattern 'patched by hand'   # 期望无输出
+   Select-String -Path .\config\project.yml -Pattern '^doc_link:'       # 期望能查到
+   Select-String -Path .\config\project.yml -Pattern 'test_custom_marker'  # 期望仍能查到
+   ```
+
+   期望：
+
+   - 第 1、2 条通过 → 四类只读目录在版本变化时由包内版本整体覆盖，旧残留和手工修改被清掉。
+   - 第 3 条通过 → `config/*.yml` 的缺键合并把用户删掉的顶层键补回来了。
+   - 第 4 条通过 → 补齐新键**没有**覆盖用户已有的顶层键。
+
+   > 校验时机：覆盖与合并发生在应用启动的 `ensure_work_dir_ready()` 里，所以必须在第 7 节第 1 步重新启动应用之后、且等首启播种完成后才能断言；`Update.exe apply` 本身不跑应用。
+
+5. 关闭应用：
 
    ```powershell
    Get-Process OneDragon -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -321,7 +442,7 @@ Test-Path .\deploy\dist\releases\releases.win.json
 另外，以下项在 arm-1 上同样无法验证，需要人类或 CI 环境确认，不算本清单通过：
 
 - `vpk pack`、PyInstaller 冻结构建本身是否成功（arm-1 是 Linux，无法执行）。
-- SignPath 签名后 `Setup.exe` / `Update.exe` / `OneDragon.exe` 是否都带合法签名。
+- SignPath 签名后的三个 exe 是否都带合法签名（Windows 上用第 4.1 节的 `Get-AuthenticodeSignature` 核查；arm-1 上只能确认 workflow 与 `sign_file.ps1` 的代码路径，不能执行签名）。
 - 离线模型包 `ZenlessZoneZero-OneDragon-Models.zip` 解压到根层后离线可用。
 - CNB 镜像同步 `RELEASES` / `releases.win.json` / `.nupkg` 是否完整。
 
@@ -333,9 +454,12 @@ Test-Path .\deploy\dist\releases\releases.win.json
 | 2 | 打 `0.1.0-beta.1` | 退出码 0 | | | |
 | 3 | 打 `0.1.0-beta.2`（同一 outputDir） | 退出码 0 | | | |
 | 4 | 产物断言 | `Setup.exe` / `win-Portable.zip` / `RELEASES` / `releases.win.json` / 两个 nupkg 齐全 | | | |
+| 4.1 | 签名验证（B1） | `Setup.exe` / `OneDragon.exe` / `Update.exe` 的 `Get-AuthenticodeSignature` 全为 `Valid` | | | |
+| 4.2 | 非发布版本号（S5） | PR 构建为 `0.0.0-pr.<n>.g<sha>`，分支构建为 `0.0.0-dev.g<sha>`，匹配 SemVer2 | | | |
 | 5 | 便携版首启播种 | `config` / `assets` / `custom` / `.log` / `.bundle_seed_version` 存在，四类资源计数 1820/10/8/178 | | | |
 | 6 | 就地升级 | `current\sq.version` 为 `0.1.0-beta.2`，`config\project.yml` 的 `test_custom_marker` 保留 | | | |
 | 7 | 日志检索 | 「不是有效的 Git 仓库」计数 0，「尝试下一个代码源」计数 0 | | | |
+| 7.1 | S4 覆盖与合并 | 只读资源残留被清、手工改动被盖回；`doc_link` 被补齐、`test_custom_marker` 保留 | | | |
 | 8 | 源码模式 | `is_velopack_mode()` 为 `False`，`get_work_dir()` 为仓库根目录，GUI 正常 | | | |
 | 9 | 进程清理 | 退出后无 `OneDragon` / `Update` 残留进程 | | | |
 | 10 | 未验证项 | 应用内检查更新 UI / 窗口渲染 / `Setup.exe` 安装向导 | | | 需人类单独确认 |
